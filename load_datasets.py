@@ -15,9 +15,18 @@ def convert_to_np_array(row):
     return np.array(eval(row))
 
 def create_dgl_graphs(row):
+    # If we have only one node, we make a recurrent connection to it, so we can include the features in the graph.
+    #TODO: Clarify this with Ze
+    if np.sum(row['adjacency_matrix']) == 0: # Verify if we have nodes without connections. IF yes, create recurrent connections to have the features.
+        np.fill_diagonal(row['adjacency_matrix'], 1)
     src, dest = np.nonzero(row['adjacency_matrix'])
+    # print(row)
     execution_graph = dgl.graph((src, dest))
-    execution_graph.ndata['features'] = torch.Tensor(row['feature_matrix'].reshape(row['size'],-1))
+    #print(execution_graph.num_nodes())
+    try:
+        execution_graph.ndata['features'] = torch.Tensor(row['feature_matrix'].reshape(row['size'],-1))
+    except:
+        return np.nan
     return execution_graph
 
 
@@ -26,7 +35,11 @@ def load_dataset(path):
     df['adjacency_matrix'] = df[['adjacency_matrix', 'size']].apply(convert_to_adjancency, axis=1)
     df['feature_matrix'] = df['feature_matrix'].apply(convert_to_np_array)
     df['graphs'] = df.apply(create_dgl_graphs, axis=1)
+    df.dropna(inplace=True)
+    df.reset_index(drop=True, inplace=True)
     return df
+
+# %%
 
 if __name__ == '__main__':
     print('Loading')
