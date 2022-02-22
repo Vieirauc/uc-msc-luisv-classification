@@ -15,10 +15,8 @@ def convert_to_np_array(row):
     return np.array(eval(row))
 
 def create_dgl_graphs(row):
-    # If we have only one node, we make a recurrent connection to it, so we can include the features in the graph.
-    #TODO: Clarify this with Ze
-    if np.sum(row['adjacency_matrix']) == 0: # Verify if we have nodes without connections. IF yes, create recurrent connections to have the features.
-        np.fill_diagonal(row['adjacency_matrix'], 1)
+    # We add the identity matrix to the adjacency matrix
+    np.fill_diagonal(row['adjacency_matrix'], 1)
     src, dest = np.nonzero(row['adjacency_matrix'])
     # print(row)
     execution_graph = dgl.graph((src, dest))

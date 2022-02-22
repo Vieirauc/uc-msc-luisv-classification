@@ -8,28 +8,35 @@ import dgl
 import torch
 from torch.utils.data import DataLoader, WeightedRandomSampler
 import torch.optim as optim
-from dgl.nn.pytorch import GraphConv
+from dgl.nn.pytorch import GraphConv, GATConv
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 # %%
-dataset_name = 'datasets/cfg-dataset-linux'
+dataset_name = 'datasets/cfg-dataset-linux-v0.3'
+# dataset_name = 'datasets/cfg-dataset-gecko-dev-v0.3'
 if not os.path.isfile(dataset_name + '.pkl'):
     df = load_dataset(dataset_name)
     df = df.to_pickle(sys.argv[1] + '.pkl')
 else:
     df = pd.read_pickle(dataset_name + '.pkl')
 
-
 # %%
+
+heads = 8
+num_features = 11
+num_epochs = 1000
 
 class GraphClassifier(nn.Module):
     def __init__(self, in_dim, hidden_dim, n_classes):
         super(GraphClassifier, self).__init__()
         self.conv1 = GraphConv(in_dim, hidden_dim, allow_zero_in_degree=True)
         self.conv2 = GraphConv(hidden_dim, hidden_dim, allow_zero_in_degree=True)
+        # num_heads = num_features?
+        #self.conv1 = GATConv(in_dim, hidden_dim, allow_zero_in_degree=True, num_heads=heads)
+        #self.conv2 = GATConv(hidden_dim, hidden_dim, allow_zero_in_degree=True, num_heads=heads)
         self.classify = nn.Linear(hidden_dim, n_classes)
     
     def forward(self, g):
@@ -75,10 +82,10 @@ data_loader = DataLoader(trainset, batch_size=32, collate_fn=collate, sampler=sa
 
 # %%
 # Create model
-model = GraphClassifier(3, 256, 2)
+model = GraphClassifier(num_features, 128, 2)
 #Class weighting
 #loss_func = nn.CrossEntropyLoss(weight=torch.tensor([1,101000]))
-loss_func = nn.CrossEntropyLoss()
+loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # %%
@@ -90,7 +97,7 @@ stats_dict = {
     'epoch_accuracy' : []
 }
 
-for epoch in range(500):
+for epoch in range(num_epochs):
     epoch_loss = 0
     for iter, (bg, label) in enumerate(data_loader):
         # print(iter)
