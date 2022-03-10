@@ -19,8 +19,9 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 # %%
 
 project = 'linux' # 'gecko-dev'#'linux'
+version = 'v0.4'
 
-dataset_name = 'datasets/cfg-dataset-{}-v0.3'.format(project)
+dataset_name = 'datasets/cfg-dataset-{}-{}'.format(project, version)
 # dataset_name = 'datasets/cfg-dataset-gecko-dev-v0.3'
 if not os.path.isfile(dataset_name + '.pkl'):
     df = load_dataset(dataset_name)
@@ -37,8 +38,8 @@ normalization = MINMAX # MINMAX #ZNORM
 heads = 2
 num_features = 11
 num_epochs = 500
-hidden_dimension_options = [64] # [32, 64, 128]
-sample_weight_value = 60 # 40
+hidden_dimension_options = [32, 64, 128]
+sample_weight_value = 40 #60 # 40
 
 
 ##################################################################################
@@ -281,7 +282,7 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_accuracy'].append(accuracy)
 
 
-    artifact_suffix = "-{}-v0.3-{}n-{}-{}-sw{}-size1".format(project, hidden_dimension, normalization, num_epochs, sample_weight_value)
+    artifact_suffix = "-{}-{}-{}n-{}-{}-sw{}-size1".format(project, version, hidden_dimension, normalization, num_epochs, sample_weight_value)
 
     df_stats = pd.DataFrame(stats_dict)
     df_stats.set_index('epoch', inplace=True)
