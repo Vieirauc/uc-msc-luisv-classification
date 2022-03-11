@@ -188,32 +188,37 @@ for i in range(1, len(trainset)):
 for i in range(1, len(testset)):
     all_feature_test_data = torch.cat((all_feature_test_data, testset[i, 0].ndata['features']), dim=0)
 
+feat_amin_train = torch.amin(all_feature_train_data, 0)
 feat_amax_train = torch.amax(all_feature_train_data, 0)
 feat_mean_train = torch.mean(all_feature_train_data, 0)
 feat_std_train = torch.std(all_feature_train_data, 0)
 
+feat_amin_test = torch.amin(all_feature_test_data, 0)
 feat_amax_test = torch.amax(all_feature_test_data, 0)
 feat_mean_test = torch.mean(all_feature_test_data, 0)
 feat_std_test = torch.std(all_feature_test_data, 0)
 
-def normalize_minmax(dataset, feat_maximum):
+
+def normalize_minmax(dataset, feat_minimum, feat_maximum):
     # as the minimum is always zero, the min-max normalization can be simplified with the division by the maximum value
     for i in range(len(dataset)):
-        dataset[i, 0].ndata['features'] = torch.div(dataset[i, 0].ndata['features'], feat_maximum)
+        dataset[i, 0].ndata['features'] = torch.div(torch.sub(dataset[i, 0].ndata['features'], feat_minimum), torch.div(feat_maximum, feat_minimum))
     return dataset
+
 
 def normalize_znorm(dataset, feat_mean, feat_std):
     for i in range(len(dataset)):
         dataset[i, 0].ndata['features'] = torch.div(torch.sub(dataset[i, 0].ndata['features'], feat_mean), feat_std)
     return dataset
 
+
 print("Normalization to be performed")
 if normalization == ZNORM:
     trainset = normalize_znorm(trainset, feat_mean_train, feat_std_train)
     testset = normalize_znorm(testset, feat_mean_test, feat_std_test)
 if normalization == MINMAX: 
-    trainset = normalize_minmax(trainset, feat_amax_train)
-    testset = normalize_minmax(testset, feat_amax_test)
+    trainset = normalize_minmax(trainset, feat_amin_train, feat_amax_train)
+    testset = normalize_minmax(testset, feat_amin_test, feat_amax_test)
 
 
 ###########################################################
