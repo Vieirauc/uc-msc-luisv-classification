@@ -243,39 +243,39 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 
         #print(h.shape)
         bs = h.shape[0]
-        h = F.relu(self.conv1(g, h))
+        h1 = F.relu(self.conv1(g, h))
         #print(h.shape)
-        h = h.reshape(bs, -1)
+        h1 = h1.reshape(bs, -1)
         #print(h.shape)
-        h = F.relu(self.conv2(g, h))
+        h2 = F.relu(self.conv2(g, h1))
         #print(h.shape)
-        h = h.reshape(bs, -1)
+        h2 = h2.reshape(bs, -1)
         #print(h.shape)
-        h = F.relu(self.conv3(g, h))
+        h3 = F.relu(self.conv3(g, h2))
         #print(h.shape)
-        h = h.reshape(bs, -1)
+        h3 = h3.reshape(bs, -1)
         #print(h.shape)
-        h = F.relu(self.conv4(g, h))
+        h4 = F.relu(self.conv4(g, h3))
         #print(h.shape)
-        h = h.reshape(bs, -1)
+        h4 = h4.reshape(bs, -1)
         #print(h.shape)
-        h = self.drop(h)
+        h4 = self.drop(h4)
         #print(h.shape)
         #h = self.avgpooling(g, h)
 
-        h = self.sortpool(g, h)
+        h4 = self.sortpool(g, h4)
         #print("after sortpool:", h.shape)
 
-        current_batch_size = h.shape[0]
+        current_batch_size = h4.shape[0]
 
-        h = h.reshape(current_batch_size, self.conv1D.in_channels, self.sortpooling_k)
+        h4 = h4.reshape(current_batch_size, self.conv1D.in_channels, self.sortpooling_k)
         #h = h.reshape(current_batch_size, self.sortpooling_k, self.hidden_dim)
         #print("after resize:", h.shape)
 
-        h = F.relu(self.conv1D(h))
+        h4 = F.relu(self.conv1D(h))
         #print("after Conv1d:", h.shape)
 
-        h = torch.squeeze(h)
+        h4 = torch.squeeze(h4)
         #print("after squeeze:", h.shape)
 
         # TODO : Verficar com o Nuno: será que aqui que é para aplicar o SortPooling ?
@@ -283,7 +283,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 #         h = torch.cat([havg, hmax], 1)
         #print(h.shape)
 
-        return self.classify(h)
+        return self.classify(h4)
 
 
 # Load and Process dataset
