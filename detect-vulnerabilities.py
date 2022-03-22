@@ -35,11 +35,16 @@ ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX # MINMAX #ZNORM
 
-heads = 2
+SORTPOOLING = "sort_pooling"
+ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
+
+pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
+
+heads = 4 # 2
 num_features = 11
-num_epochs = 500
-hidden_dimension_options = [32, 64, 128]
-sample_weight_value = 40 #60 # 40
+num_epochs = 500 #2000 #500 # 1000
+hidden_dimension_options = [32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
+sample_weight_value = 80 #90 #100 #80 #60 # 40
 
 
 ##################################################################################
@@ -133,6 +138,138 @@ class GATGraphClassifier(nn.Module):
         current_batch_size = h.shape[0]
 
         h = h.reshape(current_batch_size, self.hidden_dim, self.sortpooling_k)
+        #print("after resize:", h.shape)
+
+        h = F.relu(self.conv1D(h))
+        #print("after Conv1d:", h.shape)
+
+        h = torch.squeeze(h)
+        #print("after squeeze:", h.shape)
+
+        # TODO : Verficar com o Nuno: será que aqui que é para aplicar o SortPooling ?
+#         hmax = self.maxpooling(g, h)
+#         h = torch.cat([havg, hmax], 1)
+        #print(h.shape)
+
+        return self.classify(h)
+
+
+    def forward_amp(self, g):
+        # Use node degree as the initial node feature. For undirected graphs, the in-degree
+        # is the same as the out_degree.
+        h = g.ndata['features'].float()
+
+        print(h.shape)
+        bs = h.shape[0]
+        h = F.relu(self.conv1(g, h))
+        print("conv1:", h.shape)
+        h = h.reshape(bs, -1)
+        print("reshape:", h.shape)
+        h = F.relu(self.conv2(g, h))
+        print("conv2:", h.shape)
+        h = h.reshape(bs, -1)
+        print("reshape", h.shape)
+        #h = self.drop(h)
+        #print("after drop:", h.shape)
+        ##h = self.avgpooling(g, h)
+
+#torch.Size([657, 10])
+#conv1: torch.Size([657, 4, 32])
+#reshape: torch.Size([657, 128])
+#conv2: torch.Size([657, 1, 32])
+#reshape torch.Size([657, 32])
+#after drop: torch.Size([657, 32])
+
+        if pooling_type == SORTPOOLING:
+            h = self.sortpool(g, h)
+            #print("after sortpool:", h.shape)
+
+            current_batch_size = h.shape[0]
+
+            h = h.reshape(current_batch_size, self.hidden_dim, self.sortpooling_k)
+            #h = h.reshape(current_batch_size, self.sortpooling_k, self.hidden_dim)
+            #print("after resize:", h.shape)
+
+            h = F.relu(self.conv1D(h))
+            #print("after Conv1d:", h.shape)
+
+            h = torch.squeeze(h)
+            #print("after squeeze:", h.shape)
+        elif pooling_type == ADAPTIVEMAXPOOLING:
+
+            #h1 = h.reshape(bs, -1)
+            #print("reshape (h1.shape):", h1.shape)
+            #h1 = self.drop(h1)
+            #print("drop (h1.shape):", h1.shape)
+            #h1 = self.sortpool(g, h1)
+            #print("sortpool (h1.shape):", h1.shape)
+            h = torch.unsqueeze(h, 0)
+            amp = nn.AdaptiveMaxPool2d((5,7))
+            h = amp(h)
+            print("After AMP:", h.shape)
+            #g.ndata['h'] = h
+            #hg = dgl.mean_nodes(g, 'h')
+
+
+        # TODO : Verficar com o Nuno: será que aqui que é para aplicar o SortPooling ?
+#         hmax = self.maxpooling(g, h)
+#         h = torch.cat([havg, hmax], 1)
+        #print(h.shape)
+
+        return self.classify(h) # self.classify(h)
+
+
+
+class GATGraphClassifier4HiddenLayers(nn.Module):
+    def __init__(self, in_dim, hidden_dimensions, n_classes, sortpooling_k=3):
+        super(GATGraphClassifier4HiddenLayers, self).__init__()
+        self.conv1 = GATConv(in_dim, hidden_dimensions[0], heads)  # allow_zero_in_degree=True
+        self.conv2 = GATConv(hidden_dimensions[0] * heads, hidden_dimensions[1], heads)
+        self.conv3 = GATConv(hidden_dimensions[1] * heads, hidden_dimensions[2], heads)
+        self.conv4 = GATConv(hidden_dimensions[2] * heads, hidden_dimensions[3], 1)
+        self.classify = nn.Linear(hidden_dimensions[3], n_classes)
+
+        self.sortpooling_k = sortpooling_k
+        self.sortpool = SortPooling(k=sortpooling_k)
+        self.conv1D = nn.Conv1d(in_channels=hidden_dimensions[3], out_channels=hidden_dimensions[3], kernel_size=3, stride=1)
+        self.avgpooling = AvgPooling()
+        self.drop = nn.Dropout(p = 0.3)
+
+
+    def forward(self, g):
+        # Use node degree as the initial node feature. For undirected graphs, the in-degree
+        # is the same as the out_degree.
+        h = g.ndata['features'].float()
+
+        #print(h.shape)
+        bs = h.shape[0]
+        h = F.relu(self.conv1(g, h))
+        #print(h.shape)
+        h = h.reshape(bs, -1)
+        #print(h.shape)
+        h = F.relu(self.conv2(g, h))
+        #print(h.shape)
+        h = h.reshape(bs, -1)
+        #print(h.shape)
+        h = F.relu(self.conv3(g, h))
+        #print(h.shape)
+        h = h.reshape(bs, -1)
+        #print(h.shape)
+        h = F.relu(self.conv4(g, h))
+        #print(h.shape)
+        h = h.reshape(bs, -1)
+        #print(h.shape)
+        h = self.drop(h)
+        #print(h.shape)
+        #h = self.avgpooling(g, h)
+
+        h = self.sortpool(g, h)
+        #print("after sortpool:", h.shape)
+
+        current_batch_size = h.shape[0]
+
+        h = h.reshape(current_batch_size, self.conv1D.in_channels, self.sortpooling_k)
+        #h = h.reshape(current_batch_size, self.sortpooling_k, self.hidden_dim)
         #print("after resize:", h.shape)
 
         h = F.relu(self.conv1D(h))
@@ -247,8 +384,11 @@ data_loader = DataLoader(trainset, batch_size=32, collate_fn=collate, sampler=sa
 for hidden_dimension in hidden_dimension_options:
     # %%
     # Create model
-    model = GraphClassifier(num_features, hidden_dimension, 2)
-    #model = GATGraphClassifier(num_features, hidden_dimension, 2)
+    #model = GraphClassifier(num_features, hidden_dimension, 2)
+    if type(hidden_dimension) is list:
+        model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2)
+    else:
+        model = GATGraphClassifier(num_features, hidden_dimension, 2)
 
     #Class weighting
     #loss_func = nn.CrossEntropyLoss(weight=torch.tensor([1,101000]))
