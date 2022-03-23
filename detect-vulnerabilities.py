@@ -272,7 +272,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #h = h.reshape(current_batch_size, self.sortpooling_k, self.hidden_dim)
         #print("after resize:", h.shape)
 
-        h4 = F.relu(self.conv1D(h))
+        h4 = F.relu(self.conv1D(h4))
         #print("after Conv1d:", h.shape)
 
         h4 = torch.squeeze(h4)
