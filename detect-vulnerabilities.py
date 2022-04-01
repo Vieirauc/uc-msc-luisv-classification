@@ -427,9 +427,9 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_accuracy'].append(accuracy)
 
 
-    artifact_suffix = "-{}-{}-{}n-{}-{}-sw{}-size1-{}".format(project, version, hidden_dimension, normalization, num_epochs, sample_weight_value, type(model).__name__)
+    artifact_suffix = "-{}-{}-{}n-{}-{}-sw{}-size1-{}-concat".format(project, version, hidden_dimension, normalization, num_epochs, sample_weight_value, type(model).__name__)
 
-    if type(model).__name__ == "GATGraphClassifier":
+    if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
         artifact_suffix += "-heads{}".format(heads)
 
     df_stats = pd.DataFrame(stats_dict)
