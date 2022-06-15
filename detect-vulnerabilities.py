@@ -11,11 +11,15 @@ import torch.optim as optim
 from dgl.nn import SortPooling
 from dgl.nn.pytorch.glob import AvgPooling
 from dgl.nn.pytorch import GraphConv, GATConv
+import networkx as nx
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+
+#from torchvision import transforms
+
 # %%
 
 project = 'linux' # 'gecko-dev'#'linux'
@@ -33,7 +37,7 @@ else:
 
 ZNORM = "znorm"
 MINMAX = "minmax"
-normalization = MINMAX # MINMAX #ZNORM
+normalization = MINMAX #ZNORM
 
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
@@ -41,9 +45,9 @@ ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
-num_features = 11
-num_epochs = 500 #2000 #500 # 1000
-hidden_dimension_options = [32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
+num_features = 11 #+ 8  # 8 features related to memory management
+num_epochs = 100 #5 #2000 #500 # 1000
+hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 80 #90 #100 #80 #60 # 40
 
 
@@ -219,19 +223,46 @@ class GATGraphClassifier(nn.Module):
         return self.classify(h) # self.classify(h)
 
 
-
 class GATGraphClassifier4HiddenLayers(nn.Module):
     def __init__(self, in_dim, hidden_dimensions, n_classes, sortpooling_k=3):
         super(GATGraphClassifier4HiddenLayers, self).__init__()
+
+        self.sortpooling_k = sortpooling_k
+        self.sortpool = SortPooling(k=sortpooling_k)
+
         self.conv1 = GATConv(in_dim, hidden_dimensions[0], heads)  # allow_zero_in_degree=True
         self.conv2 = GATConv(hidden_dimensions[0] * heads, hidden_dimensions[1], heads)
         self.conv3 = GATConv(hidden_dimensions[1] * heads, hidden_dimensions[2], heads)
         self.conv4 = GATConv(hidden_dimensions[2] * heads, hidden_dimensions[3], 1)
+
+        self.conv1D = nn.Conv1d(in_channels=hidden_dimensions[3], out_channels=hidden_dimensions[3], kernel_size=self.sortpooling_k, stride=1) # antes o kernal size era 3
+
+        ###############################################################
+        # TESTE SORT POOL 25/03/2022 (concat)
+
+        #ZE 11/05 self.conv1 = GraphConv(in_dim, hidden_dimensions[0], allow_zero_in_degree=True)
+        #ZE 11/05 self.conv2 = GraphConv(hidden_dimensions[0], hidden_dimensions[1], allow_zero_in_degree=True)
+        #ZE 11/05 self.conv3 = GraphConv(hidden_dimensions[1], hidden_dimensions[2], allow_zero_in_degree=True)
+        #ZE 11/05 self.conv4 = GraphConv(hidden_dimensions[2], hidden_dimensions[3], allow_zero_in_degree=True)
+
+        #ZE 11/05 self.conv1D = nn.Conv1d(in_channels=sum(hidden_dimensions), out_channels=hidden_dimensions[3], kernel_size=self.sortpooling_k, stride=1) # teste sort pool
+
+
+        self.conv1 = GraphConv(in_dim, hidden_dimensions[0], allow_zero_in_degree=True)
+        self.conv2 = GraphConv(hidden_dimensions[0], hidden_dimensions[1], allow_zero_in_degree=True)
+        self.conv3 = GraphConv(hidden_dimensions[1], hidden_dimensions[2], allow_zero_in_degree=True)
+        self.conv4 = GraphConv(hidden_dimensions[2], hidden_dimensions[3], allow_zero_in_degree=True)
+
+        self.conv1D = nn.Conv1d(in_channels=sum(hidden_dimensions), out_channels=hidden_dimensions[3], kernel_size=self.sortpooling_k, stride=1)
+
+        ###############################################################
+
         self.classify = nn.Linear(hidden_dimensions[3], n_classes)
 
-        self.sortpooling_k = sortpooling_k
-        self.sortpool = SortPooling(k=sortpooling_k)
-        self.conv1D = nn.Conv1d(in_channels=hidden_dimensions[3], out_channels=hidden_dimensions[3], kernel_size=3, stride=1)
+        self.amp_shape = (5, 5)
+        # self.conv1Damp = nn.Conv1d(in_channels=self.amp_shape[0] * self.amp_shape[1], out_channels=hidden_dimensions[3], kernel_size=1, stride=1)
+        self.conv1Damp = nn.Conv1d(in_channels=hidden_dimensions[3]**2, out_channels=hidden_dimensions[3], kernel_size=1, stride=1)
+        #self.conv1Damp = nn.Conv1d(in_channels=25, out_channels=hidden_dimensions[3], kernel_size=1, stride=1)
         self.avgpooling = AvgPooling()
         self.drop = nn.Dropout(p = 0.3)
 
@@ -239,43 +270,183 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
     def forward(self, g):
         # Use node degree as the initial node feature. For undirected graphs, the in-degree
         # is the same as the out_degree.
-        h = g.ndata['features'].float()
+        #print(type(g))
 
-        #print(h.shape)
+        # Katz centrality does not work (maybe related to eigen values and eigen vectors)
+        nx_g = dgl.to_networkx(g)
+        #centrality = nx.degree_centrality(nx_g)
+        #print(type(nx_g))
+        #print(nx_g.edges)
+        #print(nx_g.nodes)
+        #print(nx.eigenvector_centrality(nx_g))
+
+        #print("degree_centrality", nx.degree_centrality(nx_g))
+        ##print("katz_centrality", nx.katz_centrality(nx_g))
+        #print("closeness_centrality", nx.closeness_centrality(nx_g))
+        centrality = nx.closeness_centrality(nx_g)
+        #print("centrality", type(centrality))
+        #print(centrality.keys())
+        #print(centrality.values())
+        centrality = torch.FloatTensor(list(centrality.values()))
+        #print(type(centrality), centrality.shape)
+
+        #print(g.ndata)
+        h = g.ndata['features'].float()
+        if False: #True: # h.shape[0] < 500:
+            #print(type(centrality), centrality.shape)
+
+            #print("h", type(h), h.shape)
+            #print("h[0]", h[0].tolist())
+
+            #print("h", h.tolist())
+            #print("centrality", centrality.tolist())
+            #print("centrality[0]", centrality[0])
+
+            #print("h.T.shape", h.T.shape)
+            #print("h.T.mul(centrality)", h.T.mul(centrality).shape)
+
+            teste_mul = h.T.mul(centrality).T
+            #print("h.mul(centrality)", teste_mul.shape)
+            #print(teste_mul[0].tolist())
+            #print(teste_mul.tolist())
+
+            #teste_mul = torch.matmul(centrality, h)
+            #print("torch.matmul(centrality, h)", teste_mul.shape)
+
+            h = teste_mul
+
+        #teste_mul = torch.dot(h, centrality)
+        #print("torch.dot(h, centrality)", teste_mul.shape)
+
+        #teste_mul = torch.dot(centrality, h)
+        #print("torch.dot(centrality, h)", teste_mul.shape)
+
+        #print("Initial Shape:", h.shape)
         bs = h.shape[0]
+        #13/06 print("bs", bs)
         h1 = F.relu(self.conv1(g, h))
-        #print(h.shape)
+        #print("h1", h1.shape)
         h1 = h1.reshape(bs, -1)
         #print(h.shape)
         h2 = F.relu(self.conv2(g, h1))
-        #print(h.shape)
+        #print("h2", h2.shape)
         h2 = h2.reshape(bs, -1)
         #print(h.shape)
         h3 = F.relu(self.conv3(g, h2))
-        #print(h.shape)
+        #print("h3", h3.shape)
         h3 = h3.reshape(bs, -1)
         #print(h.shape)
         h4 = F.relu(self.conv4(g, h3))
-        #print(h.shape)
+        #print("h4", h4.shape)
         h4 = h4.reshape(bs, -1)
-        #print(h.shape)
+        #print("h4.shape (after reshape):", h4.shape)
+
+        h_cat = torch.cat((h1, h2, h3, h4), 1)
+        h_concat = h_cat
+        #13/06 print("h_concat.shape:", h_concat.shape)
+
         h4 = self.drop(h4)
-        #print(h.shape)
+        #print("h4.shape (after drop):", h4.shape) # h4.shape (after drop): torch.Size([819, 32])
         #h = self.avgpooling(g, h)
 
+        # TODO: isso está a mais, mas estamos usando o current_batch_size daqui
         h4 = self.sortpool(g, h4)
-        #print("after sortpool:", h.shape)
-
+        #print("after h4 sortpool:", h4.shape) # after h4 sortpool: torch.Size([32, 192])
         current_batch_size = h4.shape[0]
+        #print("current_batch_size:", current_batch_size) # current_batch_size: 32
+        h4 = h4.reshape(current_batch_size, self.conv4._out_feats, self.sortpooling_k)
 
-        h4 = h4.reshape(current_batch_size, self.conv1D.in_channels, self.sortpooling_k)
+        #print("before pooling (h_cat):", h_cat.shape)
+        if pooling_type == SORTPOOLING:
+            #print("before sortpool_cat:", h_cat.shape) # before sortpool_cat: torch.Size([819, 416])
+            h_cat = self.sortpool(g, h_cat)
+            #print("after sortpool_cat:", h_cat.shape) # after sortpool_cat: torch.Size([32, 2496])
+            h_features = h_cat
+            h_cat = h_cat.reshape(current_batch_size, int(h_cat.shape[1] / self.sortpooling_k), self.sortpooling_k)
+            #print("after reshape:", h_cat.shape) # after reshape: torch.Size([32, 416, 6])
+
+            #print(type(self.conv1).__name__)
+            if type(self.conv1).__name__ == "GATConv":
+                #print("h4", h4.shape) # h4 torch.Size([32, 32, 6])
+                h4 = self.conv1D(h4)
+                #print("h4 (after conv1D)", h4.shape)
+                h_cat = F.relu(h4)
+            else:
+                h_cat = F.relu(self.conv1D(h_cat))
+            #print("after relu (conv1D):", h_cat.shape) # after relu (conv1D): torch.Size([32, 32, 4])
+
+            h_cat = torch.squeeze(h_cat)
+            #print("after squeeze:", h_cat.shape) # after squeeze: torch.Size([32, 32, 4])
+        elif pooling_type == ADAPTIVEMAXPOOLING:
+            #13/06 print("[380] h_cat.shape", h_cat.shape)
+            #h_cat = h_cat.reshape(current_batch_size, -1) # AQUI: funciona, mas dá erro: 31/03
+            #print("h_cat.shape", h_cat.shape)
+
+            #h_cat = torch.unsqueeze(h_cat, 0) # TODO: ACHO QUE AQUI QUE ESTÁ ERRADO!!!! # comentei em 06-04-2022
+            #print("after.unsqueeze:", h_cat.shape)
+
+            #h_cat = h_cat.reshape(bs, 32, 4) # AQUI: funciona, mas dá erro no conv1D: 09/06
+            h_cat = h_cat.reshape(32, bs, 4) # AQUI: funciona, mas dá erro no save_features: 09/06
+            #13/06 print("h_cat.shape", h_cat.shape)
+
+            # TODO (3,3) (5,5) (7,7) -> experimentar este (valores tipicos de imagens)
+            width_amp = current_batch_size #32
+            height_amp = 32
+            amp = nn.AdaptiveMaxPool2d((width_amp, height_amp))
+            h_cat_aux = amp(h_cat)
+            #13/06 print("h_cat_aux.shape", h_cat_aux.shape)
+
+            width_amp = self.amp_shape[0]
+            height_amp = self.amp_shape[1]
+            amp = nn.AdaptiveMaxPool2d((width_amp, height_amp))
+            h_cat_amp = amp(h_cat)
+            #13/06 print("h_cat_amp.shape (after amp):", h_cat_amp.shape)
+            #print(h_cat)
+
+            #conv2d = nn.Conv2d(5, 2, 3, stride=2)
+            #h_cat2d = F.relu(conv2d(h_cat))
+            #print("h_cat2d", h_cat2d.shape)
+
+            # h_cat = h_cat.reshape(h_cat.shape[0], int(h_cat.shape[1] * h_cat.shape[2])) # 31-03-2022
+            #print("before reshape, current batch_size:", current_batch_size)
+            #print(h_cat)
+            #h_cat = h_cat.reshape(bs, int(h_cat.shape[1] / height_amp), height_amp)
+            #h_cat = h_cat.reshape(1, int((h_cat.shape[1] * h_cat.shape[2]) / 2), 2)
+            #h_cat_aux = h_cat_aux.reshape(current_batch_size, h_cat_aux.shape[2], 1) # comentado em 06-04-2022
+            h_cat_aux = h_cat_aux.reshape(current_batch_size, -1)# 32, 32)
+            #print("after reshape (h_cat_aux):", h_cat_aux.shape)
+            h_cat_aux = torch.unsqueeze(h_cat_aux, 2)
+            #h_cat = torch.squeeze(h_cat, 2)
+            h_cat = F.relu(self.conv1Damp(h_cat_aux))
+            h_cat = torch.squeeze(h_cat)
+
+            ######
+            h_cat_amp = h_cat_amp.reshape(self.amp_shape[0] * self.amp_shape[1], -1)
+            #h_cat = F.relu(self.conv1Damp(h_cat_amp))
+            #print("after conv1Damp (h_cat):", h_cat.shape)
+            ######
+
+            ##h_cat_amp = h_cat_amp.reshape(current_batch_size, self.amp_shape[0] * self.amp_shape[1], -1)
+
+            #h_cat_aux = torch.unsqueeze(h_cat_aux, 2)
+            #h_cat = torch.squeeze(h_cat, 2)
+            #h_cat = F.relu(self.conv1Damp(h_cat_aux))
+            ##h_cat = F.relu(self.conv1Damp(h_cat_amp))
+            ##print("after conv1Damp (h_cat):", h_cat.shape)
+
+            ##h_cat = torch.squeeze(h_cat)
+            #h_features = h_cat_amp ## COMENTADO EM 13/06
+            h_features = h_cat_aux # ADICIONADO EM 13/06
+
+            # TODO: aqui teria o VGG, mas precisamos melhorar as features antes disso.
+
         #h = h.reshape(current_batch_size, self.sortpooling_k, self.hidden_dim)
         #print("after resize:", h.shape)
 
-        h4 = F.relu(self.conv1D(h4))
+        #### h4 = F.relu(self.conv1D(h4)) # teste sort pooling 25/03/2021
         #print("after Conv1d:", h.shape)
 
-        h4 = torch.squeeze(h4)
+        #### h4 = torch.squeeze(h4) # teste sort pooling 25/03/2021
         #print("after squeeze:", h.shape)
 
         # TODO : Verficar com o Nuno: será que aqui que é para aplicar o SortPooling ?
@@ -283,12 +454,26 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 #         h = torch.cat([havg, hmax], 1)
         #print(h.shape)
 
-        return self.classify(h4)
+        ###############################################################
+        # TESTE SORT POOL 25/03/2022
+        #print("h4.shape:", h4.shape)
+
+        #print(h_cat.shape)
+        #print("before classify", h_cat.shape)
+        classification = self.classify(h_cat)
+        #13/06 print("classification.shape:", classification.shape)
+        #print(h_cat_amp.squeeze().tolist())
+        return classification, h_concat, h_features #self.classify(h_cat)
+        ###############################################################
+        # sem o sort pool
+        #return self.classify(h4)
+        ###############################################################
 
 
 # Load and Process dataset
 # %%
 df['label'] = torch.tensor(df['label'].astype(np.int8))
+#print("sum(df[label]): ", sum(df['label']))
 df['sample_weight'] = torch.tensor(1 + (df['label'].astype(np.int8) * sample_weight_value))
 def collate(samples):
     # The input `samples` is a list of pairs
@@ -369,24 +554,91 @@ def adjust_dataset(dataset):
     return dataset
 
 #  Removes one feature as it is always zero (no node was assigned to type "numeric constant")
+#print(trainset.shape)
 if normalization is not None or normalization == "":
     trainset = adjust_dataset(trainset)
     testset = adjust_dataset(testset)
     num_features -= 1
+#print(trainset.shape)
+#print(type(trainset))
+#print(type(trainset[0, 0]), trainset[0,0])
+#print(type(trainset[0, 1]), trainset[0,1])
+#print(trainset[:1])
+#aha = 0
+#for bla, aaa in trainset:
+#    #print(bla, aaa)
+#    aha += aaa
+#print("aha:", aha)
+#print(len(trainset))
 
+#print("soma apos normalizacao", sum(trainset[:, 1]))
 
 ###########################################################
+
+#print("sample_weights[train_indices]: ", sample_weights[train_indices])
+#print("sample_weights[train_indices].shape:", sample_weights[train_indices].shape)
 
 sampler = WeightedRandomSampler(sample_weights[train_indices], num_samples=len(trainset), replacement=True)
 data_loader = DataLoader(trainset, batch_size=32, collate_fn=collate, sampler=sampler)
 
+#my_sum = 0
+#for iter, (bg, label) in enumerate(data_loader):
+#    #print(type(label))
+#    my_sum += sum(label)
+#print("my_sum", my_sum)
 
+def write_file(filename, rows):
+    #transform = transforms.Compose(
+    #    [transforms.ToPILImage(),
+    #     transforms.Resize([224, 224]),
+    #     transforms.ToTensor()])
+    with open("output/" + filename + ".csv", 'w') as output_file:
+        for row in rows:
+            #print(type(row))
+            #print(row.shape)
+            #new_row = row.reshape((int(row.shape[0] / 3), 3))
+            #new_row = transform(new_row)
+            #output_file.write(" ".join([str(a) for a in new_row.tolist()]) + '\n')
+            output_file.write(" ".join([str(a) for a in row.tolist()]) + '\n')
+
+
+def save_features(h_feats, label, dataset_type, sortpooling_k):
+    #print("type(h_feats)", type(h_feats))
+    #print("type(label)", type(label))
+
+    print("[save_features] h_feats.shape", h_feats.shape)
+    print("[save_features] label.shape", label.shape)
+
+    vuln_features = []
+    non_vuln_features = []
+
+    non_vuln_indexes = (label == 0).nonzero(as_tuple=True)
+    vuln_indexes = (label == 1).nonzero(as_tuple=True)
+    print("non_vuln_indexes", non_vuln_indexes)
+    print("vuln_indexes", vuln_indexes)
+    print("h_feats.shape", h_feats.shape)
+    non_vuln = h_feats[non_vuln_indexes]
+    vuln = h_feats[vuln_indexes]
+    #print(non_vuln)
+    #print(non_vuln.shape)
+    write_file("non-vuln-features-{}-k{}".format(dataset_type, sortpooling_k), non_vuln)
+    #print(h_feats[non_vuln_indexes[0]])
+
+    #print("non_vuln[0]", non_vuln[0])
+    #print(vuln)
+    #print(vuln.shape)
+    #print(h_feats[vuln_indexes[0]])
+    #print("vuln[0]", vuln[0].tolist())
+    write_file("vuln-features-{}-k{}".format(dataset_type, sortpooling_k), vuln)
+
+
+k_sortpooling = 6 #24 #16
 for hidden_dimension in hidden_dimension_options:
     # %%
     # Create model
     #model = GraphClassifier(num_features, hidden_dimension, 2)
     if type(hidden_dimension) is list:
-        model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2)
+        model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling)
     else:
         model = GATGraphClassifier(num_features, hidden_dimension, 2)
 
@@ -406,14 +658,20 @@ for hidden_dimension in hidden_dimension_options:
         'epoch_accuracy' : []
     }
 
+    vuln_features = []
+    non_vuln_features = []
+
     for epoch in range(num_epochs):
         epoch_loss = 0
         for iter, (bg, label) in enumerate(data_loader):
-            # print(iter)
+            #print(iter, epoch)
             # print(bg.ndata['features'].shape)
             #bg = dgl.add_self_loop(bg)
-            prediction = model(bg)
+            prediction, h_concat, h_feats = model(bg)
             loss = loss_func(prediction, label)
+
+            #print("prediction:", prediction)
+            #print("h_cat:", h_cat.shape)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -426,11 +684,14 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
+    print(trainset)
 
-    artifact_suffix = "-{}-{}-{}n-{}-{}-sw{}-size1-{}-concat".format(project, version, hidden_dimension, normalization, num_epochs, sample_weight_value, type(model).__name__)
+    artifact_suffix = "-{}-{}-{}n-{}-{}-sw{}-size1-{}-concat-k{}".format(project, version, hidden_dimension, normalization, num_epochs, sample_weight_value, type(model).__name__, k_sortpooling)
 
     if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
         artifact_suffix += "-heads{}".format(heads)
+
+    #artifact_suffix += "-closeness-centrality"
 
     df_stats = pd.DataFrame(stats_dict)
     df_stats.set_index('epoch', inplace=True)
@@ -443,9 +704,11 @@ for hidden_dimension in hidden_dimension_options:
     test_X, test_Y = map(list, zip(*testset))
     test_bg = dgl.batch(test_X)
     test_Y = torch.tensor(test_Y).float()
-    prediction = model(test_bg)
+    prediction, h_concat, h_feats = model(test_bg)
+    save_features(h_feats, test_Y, "test", k_sortpooling)
     print(torch.argmax(prediction, dim = 1))
     print(test_Y)
+    print(sum(test_Y))
     # accuracy = torch.mean((test_Y == torch.argmax(prediction, dim = 1)).float())
     # torch.argmax(prediction, dim = 1)
     params = test_Y.detach().numpy(), torch.argmax(prediction, dim = 1).float().detach().numpy()
@@ -459,5 +722,12 @@ for hidden_dimension in hidden_dimension_options:
     plt.clf()
     #plt.show()
     # print(accuracy)
+
+    # Save Train Features
+    train_X, train_Y = map(list, zip(*trainset))
+    train_bg = dgl.batch(train_X)
+    train_Y = torch.tensor(train_Y).float()
+    prediction, h_concat, h_feats = model(train_bg)
+    save_features(h_feats, train_Y, "train", k_sortpooling)
 
 # %%
