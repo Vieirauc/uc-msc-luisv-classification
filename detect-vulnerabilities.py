@@ -46,7 +46,7 @@ pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
 num_features = 11 #+ 8  # 8 features related to memory management
-num_epochs = 100 #5 #2000 #500 # 1000
+num_epochs = 500 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 80 #90 #100 #80 #60 # 40
 
@@ -335,7 +335,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         h3 = F.relu(self.conv3(g, h2))
         #print("h3", h3.shape)
         h3 = h3.reshape(bs, -1)
-        #print(h.shape)
+        #print("h3", h3.shape)
         h4 = F.relu(self.conv4(g, h3))
         #print("h4", h4.shape)
         h4 = h4.reshape(bs, -1)
@@ -346,6 +346,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #13/06 print("h_concat.shape:", h_concat.shape)
 
         h4 = self.drop(h4)
+        h4_output = h4
         #print("h4.shape (after drop):", h4.shape) # h4.shape (after drop): torch.Size([819, 32])
         #h = self.avgpooling(g, h)
 
@@ -354,7 +355,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #print("after h4 sortpool:", h4.shape) # after h4 sortpool: torch.Size([32, 192])
         current_batch_size = h4.shape[0]
         #print("current_batch_size:", current_batch_size) # current_batch_size: 32
-        h4 = h4.reshape(current_batch_size, self.conv4._out_feats, self.sortpooling_k)
+        #h4 = h4.reshape(current_batch_size, self.conv4._out_feats, self.sortpooling_k)
 
         #print("before pooling (h_cat):", h_cat.shape)
         if pooling_type == SORTPOOLING:
@@ -387,13 +388,17 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 
             #h_cat = h_cat.reshape(bs, 32, 4) # AQUI: funciona, mas dá erro no conv1D: 09/06
             h_cat = h_cat.reshape(32, bs, 4) # AQUI: funciona, mas dá erro no save_features: 09/06
-            #13/06 print("h_cat.shape", h_cat.shape)
+            #print("h_cat.shape", h_cat.shape)
 
             # TODO (3,3) (5,5) (7,7) -> experimentar este (valores tipicos de imagens)
             width_amp = current_batch_size #32
             height_amp = 32
             amp = nn.AdaptiveMaxPool2d((width_amp, height_amp))
             h_cat_aux = amp(h_cat)
+            #print("h4_output", h4_output.shape)
+            h4_output = h4_output.reshape(32, bs, 1)
+            #print("h4 after reshape (seems useless)", h4_output.shape)
+            h4_aux = amp(h4_output)
             #13/06 print("h_cat_aux.shape", h_cat_aux.shape)
 
             width_amp = self.amp_shape[0]
@@ -421,6 +426,17 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
             h_cat = torch.squeeze(h_cat)
 
             ######
+            # Trying to transform the h4 in the same manner as h_cat
+            h4_aux = h4_aux.reshape(current_batch_size, -1)
+            #print("h4_aux after reshape", h4_aux.shape)
+            h4_aux = torch.unsqueeze(h4_aux, 2)
+            #print("h4_aux after unsqueeze", h4_aux.shape)
+            h4_output = F.relu(self.conv1Damp(h4_aux))
+            #print("h4_output after relu", h4_output.shape)
+            h4_output = torch.squeeze(h4_output)
+            #print("final h4_output", h4_output.shape)
+
+            ######
             h_cat_amp = h_cat_amp.reshape(self.amp_shape[0] * self.amp_shape[1], -1)
             #h_cat = F.relu(self.conv1Damp(h_cat_amp))
             #print("after conv1Damp (h_cat):", h_cat.shape)
@@ -436,7 +452,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 
             ##h_cat = torch.squeeze(h_cat)
             #h_features = h_cat_amp ## COMENTADO EM 13/06
-            h_features = h_cat_aux # ADICIONADO EM 13/06
+            h_features = torch.squeeze(h_cat_aux) # ADICIONADO EM 13/06 # alterado em 20/06
 
             # TODO: aqui teria o VGG, mas precisamos melhorar as features antes disso.
 
@@ -459,11 +475,15 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #print("h4.shape:", h4.shape)
 
         #print(h_cat.shape)
-        #print("before classify", h_cat.shape)
+        #print("h_cat before classify", h_cat.shape)
         classification = self.classify(h_cat)
+        #print("classification:", classification.shape)
+        #print("h4_output before classify", h4_output.shape)
+        classification_h4 = self.classify(h4_output)
+        #print("classification_h4:", classification_h4.shape)
         #13/06 print("classification.shape:", classification.shape)
         #print(h_cat_amp.squeeze().tolist())
-        return classification, h_concat, h_features #self.classify(h_cat)
+        return classification_h4, h_concat, h_features #self.classify(h_cat)
         ###############################################################
         # sem o sort pool
         #return self.classify(h4)
@@ -602,7 +622,7 @@ def write_file(filename, rows):
             output_file.write(" ".join([str(a) for a in row.tolist()]) + '\n')
 
 
-def save_features(h_feats, label, dataset_type, sortpooling_k):
+def save_features(h_feats, label, dataset_type, sortpooling_k, epochs):
     #print("type(h_feats)", type(h_feats))
     #print("type(label)", type(label))
 
@@ -621,7 +641,7 @@ def save_features(h_feats, label, dataset_type, sortpooling_k):
     vuln = h_feats[vuln_indexes]
     #print(non_vuln)
     #print(non_vuln.shape)
-    write_file("non-vuln-features-{}-k{}".format(dataset_type, sortpooling_k), non_vuln)
+    write_file("non-vuln-features-{}-k{}-ep{}".format(dataset_type, sortpooling_k, epochs), non_vuln)
     #print(h_feats[non_vuln_indexes[0]])
 
     #print("non_vuln[0]", non_vuln[0])
@@ -629,7 +649,7 @@ def save_features(h_feats, label, dataset_type, sortpooling_k):
     #print(vuln.shape)
     #print(h_feats[vuln_indexes[0]])
     #print("vuln[0]", vuln[0].tolist())
-    write_file("vuln-features-{}-k{}".format(dataset_type, sortpooling_k), vuln)
+    write_file("vuln-features-{}-k{}-ep{}".format(dataset_type, sortpooling_k, epochs), vuln)
 
 
 k_sortpooling = 6 #24 #16
@@ -705,7 +725,7 @@ for hidden_dimension in hidden_dimension_options:
     test_bg = dgl.batch(test_X)
     test_Y = torch.tensor(test_Y).float()
     prediction, h_concat, h_feats = model(test_bg)
-    save_features(h_feats, test_Y, "test", k_sortpooling)
+    save_features(h_feats, test_Y, "test", k_sortpooling, num_epochs)
     print(torch.argmax(prediction, dim = 1))
     print(test_Y)
     print(sum(test_Y))
@@ -728,6 +748,6 @@ for hidden_dimension in hidden_dimension_options:
     train_bg = dgl.batch(train_X)
     train_Y = torch.tensor(train_Y).float()
     prediction, h_concat, h_feats = model(train_bg)
-    save_features(h_feats, train_Y, "train", k_sortpooling)
+    save_features(h_feats, train_Y, "train", k_sortpooling, num_epochs)
 
 # %%
