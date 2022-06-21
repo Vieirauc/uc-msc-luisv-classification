@@ -4,8 +4,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
-dataset_type = "test" #"train"
-sortpooling_k = 10
+dataset_type = ["test", "train"][1]
+sortpooling_k = 6
+epochs = 500
 
 
 def obtain_dataset(dataset_path):
@@ -62,13 +63,15 @@ def save_heatmap(correlation_matrix, heatmap_title='Correlation Heatmap', heatma
 print("========== Non-Vulnerable ========== ")
 
 feat_type = "non-vuln"
-dataset_path = "output/{}-features-{}-k{}.csv".format(feat_type, dataset_type, sortpooling_k)
+dataset_path = "output/{}-features-{}-k{}-ep{}.csv".format(feat_type, dataset_type, sortpooling_k, epochs)
+print(f"dataset_path: {dataset_path}")
 dataframe_nonvuln = obtain_dataset(dataset_path)
 
 print("============ Vulnerable ============ ")
 
 feat_type = "vuln"
-dataset_path = "output/{}-features-{}-k{}.csv".format(feat_type, dataset_type, sortpooling_k)
+dataset_path = "output/{}-features-{}-k{}-ep{}.csv".format(feat_type, dataset_type, sortpooling_k, epochs)
+print(f"dataset_path: {dataset_path}")
 dataframe_vuln = obtain_dataset(dataset_path)
 
 print("==================================== ")
@@ -90,6 +93,8 @@ print("========== Non-Vulnerable ========== ")
 
 feat_type = "non-vuln"
 corr_nonvuln = dataframe_nonvuln.corr()
+print("dataframe_nonvuln", dataframe_nonvuln)
+print("corr_nonvuln", corr_nonvuln)
 output_heatmap_filepath = 'heatmap-{}-{}-k{}.png'.format(feat_type, dataset_type, sortpooling_k)
 save_heatmap(corr_nonvuln, heatmap_filepath=output_heatmap_filepath)
 
