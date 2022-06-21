@@ -483,7 +483,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #print("classification_h4:", classification_h4.shape)
         #13/06 print("classification.shape:", classification.shape)
         #print(h_cat_amp.squeeze().tolist())
-        return classification_h4, h_concat, h_features #self.classify(h_cat)
+        return classification, h_concat, h_features #self.classify(h_cat)
         ###############################################################
         # sem o sort pool
         #return self.classify(h4)
