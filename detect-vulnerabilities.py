@@ -23,7 +23,7 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 # %%
 
 project = 'linux' # 'gecko-dev'#'linux'
-version = 'v0.4'
+version = 'v0.5'
 
 dataset_name = 'datasets/cfg-dataset-{}-{}'.format(project, version)
 # dataset_name = 'datasets/cfg-dataset-gecko-dev-v0.3'
@@ -45,7 +45,7 @@ ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
-num_features = 11 #+ 8  # 8 features related to memory management
+num_features = 11 + 8 # 8 features related to memory management
 num_epochs = 500 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 80 #90 #100 #80 #60 # 40
@@ -569,7 +569,11 @@ def adjust_dataset(dataset):
     # Removes the column where all the features are zero
     for i in range(len(dataset)):
         t = dataset[i, 0].ndata['features']
-        t = torch.cat((t[:,0:3], t[:,4:]), 1)
+        if num_features > 11:
+            # memory management features are also available
+            t = torch.cat((t[:,0:3], t[:,4:15], t[:,16:18]), 1)
+        else:
+            t = torch.cat((t[:,0:3], t[:,4:]), 1)
         dataset[i, 0].ndata['features'] = t
     return dataset
 
@@ -578,7 +582,11 @@ def adjust_dataset(dataset):
 if normalization is not None or normalization == "":
     trainset = adjust_dataset(trainset)
     testset = adjust_dataset(testset)
-    num_features -= 1
+    if num_features > 11:
+        # memory management features are also available
+        num_features -= 3
+    else:
+        num_features -= 1
 #print(trainset.shape)
 #print(type(trainset))
 #print(type(trainset[0, 0]), trainset[0,0])
@@ -641,7 +649,7 @@ def save_features(h_feats, label, dataset_type, sortpooling_k, epochs):
     vuln = h_feats[vuln_indexes]
     #print(non_vuln)
     #print(non_vuln.shape)
-    write_file("non-vuln-features-{}-k{}-ep{}".format(dataset_type, sortpooling_k, epochs), non_vuln)
+    write_file("non-vuln-features-{}-k{}-ep{}-{}".format(dataset_type, sortpooling_k, epochs, version), non_vuln)
     #print(h_feats[non_vuln_indexes[0]])
 
     #print("non_vuln[0]", non_vuln[0])
@@ -649,7 +657,7 @@ def save_features(h_feats, label, dataset_type, sortpooling_k, epochs):
     #print(vuln.shape)
     #print(h_feats[vuln_indexes[0]])
     #print("vuln[0]", vuln[0].tolist())
-    write_file("vuln-features-{}-k{}-ep{}".format(dataset_type, sortpooling_k, epochs), vuln)
+    write_file("vuln-features-{}-k{}-ep{}-{}".format(dataset_type, sortpooling_k, epochs, version), vuln)
 
 
 k_sortpooling = 6 #24 #16
