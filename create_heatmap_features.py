@@ -1,0 +1,112 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+from sklearn import preprocessing
+import matplotlib.pyplot as plt
+
+
+dataset_type = ["test", "train"][1]
+sortpooling_k = 10
+
+
+# define a method to scale data, looping thru the columns, and passing a scaler
+def scale_data(data, columns, scaler):
+    for col in columns:
+        data[col] = scaler.fit_transform(data[col].values.reshape(-1, 1))
+    return data
+
+
+def obtain_dataset(dataset_path, scaler=None):
+    df = pd.read_csv(dataset_path, header=None, delimiter=" ")
+    if scaler:
+        scale_data(df, df.columns, scaler)
+    print(df.shape)
+
+    random_seed = 42
+    dataset_size = len(df)
+    indices = np.arange(dataset_size)
+    split = 50 #10
+    np.random.seed(random_seed)
+    np.random.shuffle(indices)
+
+    #print(indices)
+    #print(indices[:split])
+    #print(df.columns)
+
+    dataframe = df[df.columns.tolist()].values[indices[:split]]
+
+    dataframe = pd.DataFrame(dataframe)
+
+    # removes all the columns with only zeros
+    dataframe = dataframe.loc[:, (df != 0).any(axis=0)]
+
+    return dataframe
+
+
+#mask = np.triu(np.ones_like(dataframe.corr(), dtype=bool))
+
+def save_heatmap(correlation_matrix, heatmap_title='Correlation Heatmap', heatmap_filepath='heatmap.png'):
+    # Based on https://medium.com/@szabo.bibor/how-to-create-a-seaborn-correlation-heatmap-in-python-834c0686b88e
+
+    plt.clf()
+
+    # Increase the size of the heatmap.
+    plt.figure(figsize=(16, 6))
+
+    # Store heatmap object in a variable to easily access it when you want to include more features (such as title).
+    # Set the range of values to be displayed on the colormap from -1 to 1, and set the annotation to True to display the correlation values on the heatmap.
+    # (Person is the standard correlation method)
+    heatmap = sns.heatmap(correlation_matrix ) #, vmin=0, vmax=1)#, annot=True)
+
+    # Give a title to the heatmap. Pad defines the distance of the title from the top of the heatmap.
+    heatmap.set_title(heatmap_title, fontdict={'fontsize':12}, pad=12)
+
+    # save heatmap as .png file
+    # dpi - sets the resolution of the saved image in dots/inches
+    # bbox_inches - when set to 'tight' - does not allow the labels to be cropped
+    plt.savefig(heatmap_filepath, dpi=300, bbox_inches='tight')
+
+
+min_max_scaler = preprocessing.MinMaxScaler()
+print("========== Non-Vulnerable ========== ")
+
+feat_type = "non-vuln"
+dataset_path = "output/{}-features-{}-k{}.csv".format(feat_type, dataset_type, sortpooling_k)
+dataframe_nonvuln = obtain_dataset(dataset_path, min_max_scaler)
+
+print("============ Vulnerable ============ ")
+
+feat_type = "vuln"
+dataset_path = "output/{}-features-{}-k{}.csv".format(feat_type, dataset_type, sortpooling_k)
+dataframe_vuln = obtain_dataset(dataset_path, min_max_scaler)
+
+print("==================================== ")
+
+# Verificação se há colunas em um dois dataset que não tem no outro
+not_in_non_vulnerable = [i for i in list(dataframe_vuln.columns) if i not in list(dataframe_nonvuln.columns)]
+print(not_in_non_vulnerable)
+#Todos os itens dos vulneráveis também estão nos não vulneráveis
+not_in_vulnerable = [i for i in list(dataframe_nonvuln.columns) if i not in list(dataframe_vuln.columns)]
+print(not_in_vulnerable)
+
+for index in not_in_non_vulnerable:
+    del(dataframe_vuln[index])
+
+for index in not_in_vulnerable:
+    del(dataframe_nonvuln[index])
+
+
+print("========== Non-Vulnerable ========== ")
+
+feat_type = "non-vuln"
+output_heatmap_filepath = 'feat-heatmap-{}-{}-k{}.png'.format(feat_type, dataset_type, sortpooling_k)
+save_heatmap(dataframe_nonvuln, heatmap_title='Correlation Heatmap - Non Vulnerable', heatmap_filepath=output_heatmap_filepath)
+
+print("============ Vulnerable ============ ")
+
+feat_type = "vuln"
+output_heatmap_filepath = 'feat-heatmap-{}-{}-k{}.png'.format(feat_type, dataset_type, sortpooling_k)
+save_heatmap(dataframe_vuln, heatmap_title='Correlation Heatmap - Vulnerable', heatmap_filepath=output_heatmap_filepath)
+
+print("==================================== ")
+
