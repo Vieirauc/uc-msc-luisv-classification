@@ -4,9 +4,10 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
-dataset_type = ["test", "train"][1]
+dataset_type = ["test", "train"][0]
 sortpooling_k = 6
 epochs = 500
+version = "v0.4"
 
 
 def obtain_dataset(dataset_path):
@@ -63,14 +64,14 @@ def save_heatmap(correlation_matrix, heatmap_title='Correlation Heatmap', heatma
 print("========== Non-Vulnerable ========== ")
 
 feat_type = "non-vuln"
-dataset_path = "output/{}-features-{}-k{}-ep{}.csv".format(feat_type, dataset_type, sortpooling_k, epochs)
+dataset_path = "output/{}-features-{}-k{}-ep{}-{}.csv".format(feat_type, dataset_type, sortpooling_k, epochs, version)
 print(f"dataset_path: {dataset_path}")
 dataframe_nonvuln = obtain_dataset(dataset_path)
 
 print("============ Vulnerable ============ ")
 
 feat_type = "vuln"
-dataset_path = "output/{}-features-{}-k{}-ep{}.csv".format(feat_type, dataset_type, sortpooling_k, epochs)
+dataset_path = "output/{}-features-{}-k{}-ep{}-{}.csv".format(feat_type, dataset_type, sortpooling_k, epochs, version)
 print(f"dataset_path: {dataset_path}")
 dataframe_vuln = obtain_dataset(dataset_path)
 
@@ -95,14 +96,14 @@ feat_type = "non-vuln"
 corr_nonvuln = dataframe_nonvuln.corr()
 print("dataframe_nonvuln", dataframe_nonvuln)
 print("corr_nonvuln", corr_nonvuln)
-output_heatmap_filepath = 'heatmap-{}-{}-k{}.png'.format(feat_type, dataset_type, sortpooling_k)
+output_heatmap_filepath = 'heatmaps/heatmap-{}-{}-k{}-ep{}-{}.png'.format(feat_type, dataset_type, sortpooling_k, epochs, version)
 save_heatmap(corr_nonvuln, heatmap_filepath=output_heatmap_filepath)
 
 print("============ Vulnerable ============ ")
 
 feat_type = "vuln"
 corr_vuln = dataframe_vuln.corr()
-output_heatmap_filepath = 'heatmap-{}-{}-k{}.png'.format(feat_type, dataset_type, sortpooling_k)
+output_heatmap_filepath = 'heatmaps/heatmap-{}-{}-k{}-ep{}-{}.png'.format(feat_type, dataset_type, sortpooling_k, epochs, version)
 save_heatmap(corr_vuln, heatmap_filepath=output_heatmap_filepath)
 
 print("==================================== ")
@@ -122,12 +123,12 @@ diff_numpy = corr_nonvuln_np - corr_vuln_np
 df_diff = pd.DataFrame(data=diff_numpy)
 
 print(df_diff)
-save_heatmap(df_diff, heatmap_title='Correlation Heatmap Diff {}'.format(dataset_type.capitalize()), heatmap_filepath='heatmap-diff-{}-k{}.png'.format(dataset_type, sortpooling_k))
+save_heatmap(df_diff, heatmap_title='Correlation Heatmap Diff {}'.format(dataset_type.capitalize()), heatmap_filepath='heatmaps/heatmap-diff-{}-k{}-ep{}-{}.png'.format(dataset_type, sortpooling_k, epochs, version))
 
 diff_numpy = np.absolute(diff_numpy)
 df_diff = pd.DataFrame(data=diff_numpy)
 
 print(df_diff)
-save_heatmap(df_diff, heatmap_title='Correlation Heatmap Diff Absolute {}'.format(dataset_type.capitalize()), heatmap_filepath='heatmap-diff-absolute-{}-k{}.png'.format(dataset_type, sortpooling_k))
+save_heatmap(df_diff, heatmap_title='Correlation Heatmap Diff Absolute {}'.format(dataset_type.capitalize()), heatmap_filepath='heatmaps/heatmap-diff-absolute-{}-k{}-ep{}-{}.png'.format(dataset_type, sortpooling_k, epochs, version))
 
 
