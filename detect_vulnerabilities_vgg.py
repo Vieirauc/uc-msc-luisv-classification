@@ -83,13 +83,10 @@ class VGGnet(nn.Module):
         )
 
     def forward(self, x):
-        print(f"x.shape: {x.shape}")
         #x = x.reshape(x.shape[0], 64, int(x.shape[2] / 64), x.shape[3])
         x = self.conv_layers(x)
         x = x.reshape(x.shape[0], -1)
         x = self.fcs(x)
-        print(f"x.shape: {x.shape}")
-        print(f"x: {x}")
         return x
 
     def create_conv_layers(self, architecture):
