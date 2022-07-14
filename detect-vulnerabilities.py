@@ -212,7 +212,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
                                      out_channels=conv2dChannel,
                                      kernel_size=13, stride=1, padding=6)
 
-        self.amp2 = nn.AdaptiveMaxPool2d((30, sum(hidden_dimensions))) # 05/07: no caso deles, a ultima dimensao tem tamanho 1
+        self.amp = nn.AdaptiveMaxPool2d((30, sum(hidden_dimensions))) # 05/07: no caso deles, a ultima dimensao tem tamanho 1
         self.avgpooling = AvgPooling()
         self.drop = nn.Dropout(p = 0.3)
 
@@ -282,7 +282,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
                 toConv = torch.unsqueeze(h_cat, 0)
                 toConv = toConv.unsqueeze(0)
                 conved = self.conv2dParam(toConv)
-                apGraphs = self.amp2(conved)
+                apGraphs = self.amp(conved)
 
             amps.append(apGraphs.squeeze())
 
@@ -502,7 +502,7 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-    artifact_suffix = "-{}-{}-{}n-{}-{}-sw{}-size1-{}-concat-k{}".format(project, version, hidden_dimension, normalization, num_epochs, sample_weight_value, type(model).__name__, k_sortpooling)
+    artifact_suffix = "-{}-{}-{}n-{}-{}-sw{}-size1-{}-concat-k{}-vgg".format(project, version, hidden_dimension, normalization, num_epochs, sample_weight_value, type(model).__name__, k_sortpooling)
 
     if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
         artifact_suffix += "-heads{}".format(heads)
