@@ -168,7 +168,7 @@ class GATGraphClassifier(nn.Module):
             amp = nn.AdaptiveMaxPool2d((5,7))
             h = amp(h)
 
-        return self.classify(h) # self.classify(h)
+        return self.classify(h)
 
 
 class GATGraphClassifier4HiddenLayers(nn.Module):
@@ -183,25 +183,16 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         self.conv3 = GATConv(hidden_dimensions[1] * heads, hidden_dimensions[2], heads)
         self.conv4 = GATConv(hidden_dimensions[2] * heads, hidden_dimensions[3], 1)
 
+        # usado apenas com o SortPooling
         self.conv1D = nn.Conv1d(in_channels=hidden_dimensions[3], out_channels=hidden_dimensions[3], kernel_size=self.sortpooling_k, stride=1) # antes o kernal size era 3
+        self.conv1D = nn.Conv1d(in_channels=sum(hidden_dimensions), out_channels=hidden_dimensions[3], kernel_size=self.sortpooling_k, stride=1)
 
         ###############################################################
-        # TESTE SORT POOL 25/03/2022 (concat)
-
-        #ZE 11/05 self.conv1 = GraphConv(in_dim, hidden_dimensions[0], allow_zero_in_degree=True)
-        #ZE 11/05 self.conv2 = GraphConv(hidden_dimensions[0], hidden_dimensions[1], allow_zero_in_degree=True)
-        #ZE 11/05 self.conv3 = GraphConv(hidden_dimensions[1], hidden_dimensions[2], allow_zero_in_degree=True)
-        #ZE 11/05 self.conv4 = GraphConv(hidden_dimensions[2], hidden_dimensions[3], allow_zero_in_degree=True)
-
-        #ZE 11/05 self.conv1D = nn.Conv1d(in_channels=sum(hidden_dimensions), out_channels=hidden_dimensions[3], kernel_size=self.sortpooling_k, stride=1) # teste sort pool
-
 
         self.conv1 = GraphConv(in_dim, hidden_dimensions[0], allow_zero_in_degree=True)
         self.conv2 = GraphConv(hidden_dimensions[0], hidden_dimensions[1], allow_zero_in_degree=True)
         self.conv3 = GraphConv(hidden_dimensions[1], hidden_dimensions[2], allow_zero_in_degree=True)
         self.conv4 = GraphConv(hidden_dimensions[2], hidden_dimensions[3], allow_zero_in_degree=True)
-
-        self.conv1D = nn.Conv1d(in_channels=sum(hidden_dimensions), out_channels=hidden_dimensions[3], kernel_size=self.sortpooling_k, stride=1)
 
         ###############################################################
 
@@ -213,7 +204,6 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
                                      kernel_size=13, stride=1, padding=6)
 
         self.amp = nn.AdaptiveMaxPool2d((30, sum(hidden_dimensions))) # 05/07: no caso deles, a ultima dimensao tem tamanho 1
-        self.avgpooling = AvgPooling()
         self.drop = nn.Dropout(p = 0.3)
 
 
@@ -224,15 +214,15 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 
         for g in graphs:
             # Katz centrality does not work (maybe related to eigen values and eigen vectors)
-            nx_g = dgl.to_networkx(g)
+            #nx_g = dgl.to_networkx(g)
             #centrality = nx.degree_centrality(nx_g)
             #print(nx.eigenvector_centrality(nx_g))
 
             #print("degree_centrality", nx.degree_centrality(nx_g))
             ##print("katz_centrality", nx.katz_centrality(nx_g))
             #print("closeness_centrality", nx.closeness_centrality(nx_g))
-            centrality = nx.closeness_centrality(nx_g)
-            centrality = torch.FloatTensor(list(centrality.values()))
+            #centrality = nx.closeness_centrality(nx_g)
+            #centrality = torch.FloatTensor(list(centrality.values()))
             h = g.ndata['features'].float()
             #teste_mul = h.T.mul(centrality).T
             #h = teste_mul
@@ -258,11 +248,10 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
             h4 = h4.reshape(bs, -1)
 
             h_cat = torch.cat((h1, h2, h3, h4), 1)
-            h_concat = h_cat
+            #h_concat = h_cat
             h_cat = self.drop(h_cat)
 
             h4 = self.drop(h4)
-            h4_output = h4
 
             if pooling_type == SORTPOOLING:
                 h_cat = self.sortpool(g, h_cat)
