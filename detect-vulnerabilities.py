@@ -50,6 +50,8 @@ hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 
 sample_weight_value = 80 #90 #100 #80 #60 # 40
 batch_size = 10
 k_sortpooling = 6 #24 #16
+dropout_rate = 0.1
+conv2dChannelParam = 32
 
 
 ##################################################################################
@@ -204,7 +206,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
                                      kernel_size=13, stride=1, padding=6)
 
         self.amp = nn.AdaptiveMaxPool2d((30, sum(hidden_dimensions))) # 05/07: no caso deles, a ultima dimensao tem tamanho 1
-        self.drop = nn.Dropout(p = 0.3)
+        self.drop = nn.Dropout(p = dropout_rate)
 
 
     def forward(self, graphs):
@@ -436,13 +438,13 @@ for hidden_dimension in hidden_dimension_options:
     # %%
     # Create model
     if type(hidden_dimension) is list:
-        model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling)
+        model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling, conv2dChannel=conv2dChannelParam)
     else:
         model = GATGraphClassifier(num_features, hidden_dimension, 2)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     #model_vgg = VGGnet(in_channels=batch_size).to(device)
-    model_vgg = VGGnet(in_channels=3).to(device)
+    model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
     #Class weighting
     #loss_func = nn.CrossEntropyLoss(weight=torch.tensor([1,101000]))
@@ -491,7 +493,9 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-    artifact_suffix = "-{}-{}-{}n-{}-{}-sw{}-size1-{}-concat-k{}-vgg".format(project, version, hidden_dimension, normalization, num_epochs, sample_weight_value, type(model).__name__, k_sortpooling)
+    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}-{num_epochs}"
+    artifact_suffix += f"-sw{sample_weight_value}-size1-{type(model).__name__}-k{k_sortpooling}"
+    artifact_suffix += f"-vgg-dr{dropout_rate}-c2d{conv2dChannelParam}"
 
     if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
         artifact_suffix += "-heads{}".format(heads)
