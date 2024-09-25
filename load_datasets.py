@@ -18,7 +18,22 @@ def create_dgl_graphs(row):
     # We add the identity matrix to the adjacency matrix
     np.fill_diagonal(row['adjacency_matrix'], 1)
     src, dest = np.nonzero(row['adjacency_matrix'])
+    
+    # Ensure src and dest are int64
+    src = src.astype(np.int64)
+    dest = dest.astype(np.int64)
+
+    # Convert src and dest to PyTorch tensors
+    src = torch.tensor(src, dtype=torch.int64)
+    dest = torch.tensor(dest, dtype=torch.int64)
+    
     # print(row)
+
+    # Debugging statements
+    #print(f"src dtype: {src.dtype}, dest dtype: {dest.dtype}")
+    #print(f"src shape: {src.shape}, dest shape: {dest.shape}")
+    #print(f"src: {src}, dest: {dest}")
+    
     execution_graph = dgl.graph((src, dest))
     #print(execution_graph.num_nodes())
     try:
