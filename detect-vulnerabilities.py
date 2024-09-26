@@ -25,7 +25,7 @@ from detect_vulnerabilities_vgg import VGGnet
 project = 'linux' # 'gecko-dev'#'linux'
 version = 'v0.5'
 
-dataset_name = 'datasets/cfg-dataset-{}-{}'.format(project, version)
+dataset_name = 'datasets/cfg-dataset-linux-reduced'.format(project, version)
 if not os.path.isfile(dataset_name + '.pkl'):
     df = load_dataset(dataset_name)
     df = df.to_pickle(sys.argv[1] + '.pkl')

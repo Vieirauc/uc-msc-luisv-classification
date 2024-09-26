@@ -45,11 +45,15 @@ def create_dgl_graphs(row):
 
 def load_dataset(path):
     df = pd.read_csv(path + '.csv', sep=';', usecols = ['label', 'size', 'adjacency_matrix', 'feature_matrix'], dtype={'label' : np.bool_, 'size' : np.int32, 'adjacency_matrix': str, 'feature_matrix': str})
+    # Change size of the trainset
+    trainset_size = 10000
+    df = df.sample(n=trainset_size, random_state=42)
     df['adjacency_matrix'] = df[['adjacency_matrix', 'size']].apply(convert_to_adjancency, axis=1)
     df['feature_matrix'] = df['feature_matrix'].apply(convert_to_np_array)
     df['graphs'] = df.apply(create_dgl_graphs, axis=1)
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
+   
     return df
 
 # %%
@@ -59,7 +63,7 @@ if __name__ == '__main__':
     dataset_name = sys.argv[1]
     if not os.path.isfile(dataset_name + '.pkl'):
         df = load_dataset(dataset_name)
-        df = df.to_pickle(sys.argv[1] + '.pkl')
+        df = df.to_pickle(sys.argv[1] + '-reduced' + '.pkl')
     else:
         print('Pickle object already exists!')
 # %%
