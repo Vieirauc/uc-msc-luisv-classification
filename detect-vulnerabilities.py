@@ -25,7 +25,7 @@ from detect_vulnerabilities_vgg import VGGnet
 project = 'linux' # 'gecko-dev'#'linux'
 version = 'v0.5'
 
-dataset_name = 'datasets/cfg-dataset-linux-reduced'.format(project, version)
+dataset_name = 'datasets/cfg-dataset-linux-sample-1000'.format(project, version)
 if not os.path.isfile(dataset_name + '.pkl'):
     df = load_dataset(dataset_name)
     df = df.to_pickle(sys.argv[1] + '.pkl')
@@ -73,7 +73,7 @@ class GraphClassifier(nn.Module):
         # Use node degree as the initial node feature. For undirected graphs, the in-degree
         # is the same as the out_degree.
         h = g.ndata['features'].float() #g.in_degrees().reshape(-1, 1).float()
-        #print(h.shape)
+        print("h.shape:",h.shape)
 
         h = F.relu(self.conv1(g, h))
         h = F.relu(self.conv2(g, h))
@@ -317,7 +317,7 @@ testset = df[['graphs', 'label']].values[test_indices]
 
 all_feature_train_data = trainset[0,0].ndata['features']
 all_feature_test_data = testset[0,0].ndata['features']
-print(all_feature_train_data.shape, all_feature_test_data.shape)
+print("cenas: ", all_feature_train_data.shape, all_feature_test_data.shape)
 
 for i in range(1, len(trainset)):
     all_feature_train_data = torch.cat((all_feature_train_data, trainset[i, 0].ndata['features']), dim=0)
@@ -364,24 +364,26 @@ def adjust_dataset(dataset):
     # Removes the column where all the features are zero
     for i in range(len(dataset)):
         t = dataset[i, 0].ndata['features']
-        if num_features > 11:
+        if  num_features > 11:
             # memory management features are also available
             t = torch.cat((t[:,0:3], t[:,4:15], t[:,16:18]), 1)
         else:
             t = torch.cat((t[:,0:3], t[:,4:]), 1)
         dataset[i, 0].ndata['features'] = t
+        #print(f"Graph {i} feature shape: {t.shape}")
     return dataset
 
 #  Removes one feature as it is always zero (no node was assigned to type "numeric constant")
-#print(trainset.shape)
+print("trainset.shape:",trainset.shape)
 if normalization is not None or normalization == "":
-    trainset = adjust_dataset(trainset)
-    testset = adjust_dataset(testset)
+    #trainset = adjust_dataset(trainset)
+    #testset = adjust_dataset(testset)
     if num_features > 11:
         # memory management features are also available
         num_features -= 3
     else:
         num_features -= 1
+
 print("len(trainset):", len(trainset))
 
 

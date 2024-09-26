@@ -18,22 +18,7 @@ def create_dgl_graphs(row):
     # We add the identity matrix to the adjacency matrix
     np.fill_diagonal(row['adjacency_matrix'], 1)
     src, dest = np.nonzero(row['adjacency_matrix'])
-    
-    # Ensure src and dest are int64
-    src = src.astype(np.int64)
-    dest = dest.astype(np.int64)
-
-    # Convert src and dest to PyTorch tensors
-    src = torch.tensor(src, dtype=torch.int64)
-    dest = torch.tensor(dest, dtype=torch.int64)
-    
     # print(row)
-
-    # Debugging statements
-    #print(f"src dtype: {src.dtype}, dest dtype: {dest.dtype}")
-    #print(f"src shape: {src.shape}, dest shape: {dest.shape}")
-    #print(f"src: {src}, dest: {dest}")
-    
     execution_graph = dgl.graph((src, dest))
     #print(execution_graph.num_nodes())
     try:
@@ -46,8 +31,8 @@ def create_dgl_graphs(row):
 def load_dataset(path):
     df = pd.read_csv(path + '.csv', sep=';', usecols = ['label', 'size', 'adjacency_matrix', 'feature_matrix'], dtype={'label' : np.bool_, 'size' : np.int32, 'adjacency_matrix': str, 'feature_matrix': str})
     # Change size of the trainset
-    trainset_size = 10000
-    df = df.sample(n=trainset_size, random_state=42)
+    #trainset_size = 10000
+    #df = df.sample(n=trainset_size, random_state=42)
     df['adjacency_matrix'] = df[['adjacency_matrix', 'size']].apply(convert_to_adjancency, axis=1)
     df['feature_matrix'] = df['feature_matrix'].apply(convert_to_np_array)
     df['graphs'] = df.apply(create_dgl_graphs, axis=1)
@@ -63,7 +48,7 @@ if __name__ == '__main__':
     dataset_name = sys.argv[1]
     if not os.path.isfile(dataset_name + '.pkl'):
         df = load_dataset(dataset_name)
-        df = df.to_pickle(sys.argv[1] + '-reduced' + '.pkl')
+        df = df.to_pickle(sys.argv[1] + '.pkl')
     else:
         print('Pickle object already exists!')
 # %%
