@@ -73,7 +73,7 @@ class GraphClassifier(nn.Module):
         # Use node degree as the initial node feature. For undirected graphs, the in-degree
         # is the same as the out_degree.
         h = g.ndata['features'].float() #g.in_degrees().reshape(-1, 1).float()
-        print("h.shape:",h.shape)
+        #print(h.shape)
 
         h = F.relu(self.conv1(g, h))
         h = F.relu(self.conv2(g, h))
@@ -215,6 +215,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         amps = []
 
         for g in graphs:
+            
             # Katz centrality does not work (maybe related to eigen values and eigen vectors)
             #nx_g = dgl.to_networkx(g)
             #centrality = nx.degree_centrality(nx_g)
@@ -234,6 +235,9 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 
             bs = h.shape[0]  # bs is the number of nodes in the graph
             #print("bs", bs)
+
+            print(f"Graph with {bs} nodes and feature size {h.shape}")
+
             h1 = F.relu(self.conv1(g, h))
             #print("h1", h1.shape)
             h1 = h1.reshape(bs, -1)
@@ -317,7 +321,7 @@ testset = df[['graphs', 'label']].values[test_indices]
 
 all_feature_train_data = trainset[0,0].ndata['features']
 all_feature_test_data = testset[0,0].ndata['features']
-print("cenas: ", all_feature_train_data.shape, all_feature_test_data.shape)
+print("train & test data shape:",all_feature_train_data.shape, all_feature_test_data.shape)
 
 for i in range(1, len(trainset)):
     all_feature_train_data = torch.cat((all_feature_train_data, trainset[i, 0].ndata['features']), dim=0)
@@ -361,29 +365,36 @@ if normalization == MINMAX:
 ###########################################################
 
 def adjust_dataset(dataset):
-    # Removes the column where all the features are zero
+    target_feature_size = 16  # Set the desired feature size
     for i in range(len(dataset)):
         t = dataset[i, 0].ndata['features']
-        if  num_features > 11:
-            # memory management features are also available
+        
+        # Adjust based on num_features
+        if num_features > 11:
             t = torch.cat((t[:,0:3], t[:,4:15], t[:,16:18]), 1)
         else:
             t = torch.cat((t[:,0:3], t[:,4:]), 1)
+        
+        # Ensure the feature size is exactly 16 by padding if necessary
+        if t.size(1) < target_feature_size:
+            t = F.pad(t, (0, target_feature_size - t.size(1)), "constant", 0)
+        
+        # Update the dataset with the adjusted features
         dataset[i, 0].ndata['features'] = t
-        #print(f"Graph {i} feature shape: {t.shape}")
+    
     return dataset
 
+
 #  Removes one feature as it is always zero (no node was assigned to type "numeric constant")
-print("trainset.shape:",trainset.shape)
+#print(trainset.shape)
 if normalization is not None or normalization == "":
-    #trainset = adjust_dataset(trainset)
-    #testset = adjust_dataset(testset)
+    trainset = adjust_dataset(trainset)
+    testset = adjust_dataset(testset)
     if num_features > 11:
         # memory management features are also available
         num_features -= 3
     else:
         num_features -= 1
-
 print("len(trainset):", len(trainset))
 
 
