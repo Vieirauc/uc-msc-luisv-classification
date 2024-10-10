@@ -25,7 +25,7 @@ from detect_vulnerabilities_vgg import VGGnet
 project = 'linux' # 'gecko-dev'#'linux'
 version = 'v0.5'
 
-dataset_name = 'datasets/cfg-dataset-linux-sample-1000'.format(project, version)
+dataset_name = 'datasets/cfg-dataset-{}-{}'.format(project, version)
 if not os.path.isfile(dataset_name + '.pkl'):
     df = load_dataset(dataset_name)
     df = df.to_pickle(sys.argv[1] + '.pkl')
@@ -365,25 +365,16 @@ if normalization == MINMAX:
 ###########################################################
 
 def adjust_dataset(dataset):
-    target_feature_size = 16  # Set the desired feature size
+    # Removes the column where all the features are zero
     for i in range(len(dataset)):
         t = dataset[i, 0].ndata['features']
-        
-        # Adjust based on num_features
         if num_features > 11:
+            # memory management features are also available
             t = torch.cat((t[:,0:3], t[:,4:15], t[:,16:18]), 1)
         else:
             t = torch.cat((t[:,0:3], t[:,4:]), 1)
-        
-        # Ensure the feature size is exactly 16 by padding if necessary
-        if t.size(1) < target_feature_size:
-            t = F.pad(t, (0, target_feature_size - t.size(1)), "constant", 0)
-        
-        # Update the dataset with the adjusted features
         dataset[i, 0].ndata['features'] = t
-    
     return dataset
-
 
 #  Removes one feature as it is always zero (no node was assigned to type "numeric constant")
 #print(trainset.shape)
