@@ -40,7 +40,7 @@ else:
 ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX #ZNORM
-
+DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 
@@ -239,7 +239,8 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
             bs = h.shape[0]  # bs is the number of nodes in the graph
             #print("bs", bs)
 
-            print(f"Graph with {bs} nodes and feature size {h.shape}")
+            if DEBUG:
+                print(f"Graph with {bs} nodes and feature size {h.shape}")
 
             h1 = F.relu(self.conv1(g, h))
             #print("h1", h1.shape)
@@ -537,7 +538,9 @@ for hidden_dimension in hidden_dimension_options:
         epoch_loss = 0
 
         for iter, (bg, label) in enumerate(data_loader):
-            print("iter, epoch:", iter, epoch)
+            
+            if DEBUG:
+                print("iter, epoch:", iter, epoch)
             #bg = dgl.add_self_loop(bg)
             h_cat_amp = model(bg)
 
