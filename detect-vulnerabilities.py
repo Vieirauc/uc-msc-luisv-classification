@@ -17,6 +17,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from imblearn.under_sampling import RandomUnderSampler
 
 from detect_vulnerabilities_vgg import VGGnet
 
@@ -24,6 +25,8 @@ from detect_vulnerabilities_vgg import VGGnet
 
 project = 'linux' # 'gecko-dev'#'linux'
 version = 'v0.5'
+
+#cfg-dataset-linux-v0.5 has 101513 entries
 
 dataset_name = 'datasets/cfg-dataset-{}-{}'.format(project, version)
 if not os.path.isfile(dataset_name + '.pkl'):
@@ -285,6 +288,45 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #return classification, h_concat, amp_layer, amp_layer
         return amp_layer
 
+def apply_undersampling(df, strategy=0.1, method="random"):
+    """
+    Apply undersampling to the entire dataset based on the 'label' column (which is in np.bool_ format).
+    
+    :param df: The dataset containing all columns including 'label'.
+    :param strategy: The ratio of True (vulnerable) to False (non-vulnerable) labels (e.g., 0.1 for 10% True, 90% False).
+    :return: The resampled DataFrame.
+    """
+    # Ensure the label column is in boolean format
+    df['label'] = df['label'].astype(np.bool_)
+    
+    # Define X as the entire dataset except the label column
+    X = df.drop(columns=['label'])
+    y = df['label'].astype(int)  # Convert boolean labels to integers (True -> 1, False -> 0)
+    
+    # Count of the minority class (True -> 1)
+    minority_count = sum(y)
+    # Total number of samples we want in the final dataset
+    total_samples = minority_count / strategy
+    
+    # Desired majority count (False -> 0)
+    desired_majority_count = int(total_samples - minority_count)
+    
+    # Define the sampling strategy
+    sampling_strategy = {0: desired_majority_count, 1: minority_count}
+    
+    if method == "random":
+        undersampler = RandomUnderSampler(sampling_strategy=sampling_strategy, random_state=42)
+    
+    # Apply undersampling to the dataset
+    X_res, y_res = undersampler.fit_resample(X, y)
+    
+    # Combine resampled X and y into a new DataFrame
+    df_resampled = pd.concat([X_res, pd.Series(y_res.astype(np.int8), name='label')], axis=1)  # Convert labels back to boolean
+    
+    return df_resampled
+
+
+
 
 # Load and Process dataset
 # %%
@@ -300,6 +342,28 @@ def collate(samples):
     return graphs, torch.tensor(labels)
 
 
+# Example of applying undersampling
+df_resampled = apply_undersampling(df, strategy=0.1)
+
+print("Original class distribution:")
+print(df['label'].value_counts(normalize=True))  # Check percentage distribution of True/False labels
+
+# Check the class distribution after undersampling
+print("Class distribution after undersampling:")
+print(df_resampled['label'].value_counts(normalize=True))  # Should reflect the 10% True / 90% False ratio
+
+
+true_count = df_resampled['label'].sum()  # Count of True labels (1)
+false_count = len(df_resampled) - true_count  # Count of False labels (0)
+
+ratio_true = true_count / len(df_resampled)
+ratio_false = false_count / len(df_resampled)
+
+print(f"Ratio of True: {ratio_true * 100:.2f}%")
+print(f"Ratio of False: {ratio_false * 100:.2f}%")
+
+df = df_resampled
+# %%
 sample_weights = df['sample_weight'].values
 # %%
 random_seed = 42
@@ -314,6 +378,7 @@ train_indices, test_indices = indices[split : ], indices[:split]
 
 trainset = df[['graphs', 'label']].values[train_indices]
 testset = df[['graphs', 'label']].values[test_indices]
+
 
 ###########################################################
 
@@ -388,7 +453,6 @@ if normalization is not None or normalization == "":
         num_features -= 1
 print("len(trainset):", len(trainset))
 
-
 ###########################################################
 
 
@@ -437,6 +501,7 @@ def adjust_to_vgg(samples):
 
     return x1
 
+# 
 
 for hidden_dimension in hidden_dimension_options:
     # %%
