@@ -43,7 +43,8 @@ normalization = MINMAX #ZNORM
 DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-
+UNDERSAMPLING_STRAT= 0.1
+UNDERSAMPLING_METHOD = "random"
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
@@ -289,7 +290,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #return classification, h_concat, amp_layer, amp_layer
         return amp_layer
 
-def apply_undersampling(df, strategy=0.1, method="random"):
+def apply_undersampling(df, strategy=UNDERSAMPLING_STRAT, method=UNDERSAMPLING_METHOD):
     """
     Apply undersampling to the entire dataset based on the 'label' column (which is in np.bool_ format).
     
@@ -565,7 +566,7 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}-{num_epochs}"
+    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}"
     artifact_suffix += f"-sw{sample_weight_value}-size1-{type(model).__name__}-k{k_sortpooling}"
     artifact_suffix += f"-vgg-dr{dropout_rate}-c2d{conv2dChannelParam}"
 
