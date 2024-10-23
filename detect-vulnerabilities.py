@@ -40,7 +40,7 @@ else:
 ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX #ZNORM
-DEBUG = True
+DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 UNDERSAMPLING_STRAT= 0.2
