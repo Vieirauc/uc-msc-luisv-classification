@@ -17,7 +17,8 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
-from imblearn.under_sampling import RandomUnderSampler
+from sklearn.cluster import KMeans
+from imblearn.under_sampling import RandomUnderSampler, ClusterCentroids
 
 from detect_vulnerabilities_vgg import VGGnet
 
@@ -40,11 +41,11 @@ else:
 ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX #ZNORM
-DEBUG = False
+DEBUG = True
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.2
-UNDERSAMPLING_METHOD = "random"
+UNDERSAMPLING_STRAT= 0.1
+UNDERSAMPLING_METHOD = "kmeans" # "random" # "kmeans"
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
@@ -290,7 +291,25 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #return classification, h_concat, amp_layer, amp_layer
         return amp_layer
 
-def apply_undersampling(df, strategy, method):
+def pad_arrays(row, max_length):
+    """
+    Pads the flattened adjacency and feature matrices to a fixed length.
+    
+    :param row: A row from the DataFrame with 'adjacency_matrix' and 'feature_matrix'.
+    :param max_length: The fixed length to pad each array to.
+    :return: A concatenated, padded 1D array.
+    """
+    adjacency_flat = row['adjacency_matrix'].flatten()
+    feature_flat = row['feature_matrix'].flatten()
+    
+    # Pad both arrays to the max_length
+    adjacency_padded = np.pad(adjacency_flat, (0, max_length - len(adjacency_flat)), mode='constant')
+    feature_padded = np.pad(feature_flat, (0, max_length - len(feature_flat)), mode='constant')
+    
+    # Return concatenated padded arrays
+    return np.concatenate([adjacency_padded, feature_padded])
+
+def apply_undersampling(df, strategy, method, n_clusters=50):
     """
     Apply undersampling to the entire dataset based on the 'label' column (which is in np.bool_ format).
     
@@ -302,13 +321,13 @@ def apply_undersampling(df, strategy, method):
     df['label'] = df['label'].astype(np.bool_)
     
     # Define X as the entire dataset except the label column
-    X = df.drop(columns=['label'])
     y = df['label'].astype(int)  # Convert boolean labels to integers (True -> 1, False -> 0)
     
     # Count of the minority class (True -> 1)
     minority_count = sum(y)
     if DEBUG:
         print("minority_count:", minority_count)
+
     # Total number of samples we want in the final dataset
     total_samples = minority_count / strategy
     if DEBUG:
@@ -323,16 +342,35 @@ def apply_undersampling(df, strategy, method):
     sampling_strategy = {0: desired_majority_count, 1: minority_count}
     
     if method == "random":
+        X = df.drop(columns=['label'])
         undersampler = RandomUnderSampler(sampling_strategy=sampling_strategy, random_state=42)
+    elif method == "kmeans":
+        # Apply KMeans clustering-based undersampling
+        # WIP - Not yet implemented
+
+        # Find the maximum length of the flattened arrays in your dataset
+        max_length = max(df['adjacency_matrix'].apply(lambda x: x.size).max(),
+                 df['feature_matrix'].apply(lambda x: x.size).max())
+
+        df['flattened_data'] = df.apply(pad_arrays, axis=1, max_length=max_length)
+
+        X = np.vstack(df['flattened_data'].values)  # Convert the column of 1D arrays into a 2D array for clustering
+        undersampler = ClusterCentroids(sampling_strategy=sampling_strategy, 
+                                        estimator=KMeans(n_clusters=n_clusters, random_state=42))
     
-    # Apply undersampling to the dataset
+    # Apply undersampling to the dataset (for both random and kmeans methods)
     X_res, y_res = undersampler.fit_resample(X, y)
     
-    # Combine resampled X and y into a new DataFrame
-    df_resampled = pd.concat([X_res, pd.Series(y_res.astype(np.int8), name='label')], axis=1)  # Convert labels back to boolean
+    # Get the indices of the resampled dataset and map back to the original DataFrame
+    resampled_indices = np.isin(df.index, df.index[np.isin(X, X_res, assume_unique=True)])
+
+    # Create a resampled DataFrame that preserves the original structure
+    df_resampled = df.iloc[resampled_indices]
+    
+    # Update the label column in the resampled DataFrame
+    df_resampled['label'] = y_res
     
     return df_resampled
-
 
 
 
@@ -572,7 +610,7 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}"
+    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}-us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}"
     artifact_suffix += f"-sw{sample_weight_value}-size1-{type(model).__name__}-k{k_sortpooling}"
     artifact_suffix += f"-vgg-dr{dropout_rate}-c2d{conv2dChannelParam}"
 
