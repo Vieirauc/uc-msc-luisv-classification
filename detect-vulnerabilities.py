@@ -45,7 +45,7 @@ DEBUG = True
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 UNDERSAMPLING_STRAT= 0.1
-UNDERSAMPLING_METHOD = "kmeans" # "random" # "kmeans"
+UNDERSAMPLING_METHOD = "random" # "random" # "kmeans"
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
@@ -340,9 +340,7 @@ def apply_undersampling(df, strategy, method, n_clusters=50):
     
     return df_resampled
 
-
-
-
+# %%
 # Load and Process dataset
 # %%
 df['label'] = torch.tensor(df['label'].astype(np.int8))
