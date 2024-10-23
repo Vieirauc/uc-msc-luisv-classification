@@ -40,10 +40,10 @@ else:
 ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX #ZNORM
-DEBUG = False
+DEBUG = True
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.1
+UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = "random"
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
@@ -290,7 +290,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #return classification, h_concat, amp_layer, amp_layer
         return amp_layer
 
-def apply_undersampling(df, strategy=UNDERSAMPLING_STRAT, method=UNDERSAMPLING_METHOD):
+def apply_undersampling(df, strategy, method):
     """
     Apply undersampling to the entire dataset based on the 'label' column (which is in np.bool_ format).
     
@@ -307,11 +307,17 @@ def apply_undersampling(df, strategy=UNDERSAMPLING_STRAT, method=UNDERSAMPLING_M
     
     # Count of the minority class (True -> 1)
     minority_count = sum(y)
+    if DEBUG:
+        print("minority_count:", minority_count)
     # Total number of samples we want in the final dataset
     total_samples = minority_count / strategy
+    if DEBUG:
+        print("total_samples:", total_samples)
     
     # Desired majority count (False -> 0)
     desired_majority_count = int(total_samples - minority_count)
+    if DEBUG:
+        print("desired_majority_count:", desired_majority_count)
     
     # Define the sampling strategy
     sampling_strategy = {0: desired_majority_count, 1: minority_count}
@@ -344,16 +350,8 @@ def collate(samples):
     return graphs, torch.tensor(labels)
 
 
-# Example of applying undersampling
-df_resampled = apply_undersampling(df, strategy=0.1)
-
-print("Original class distribution:")
-print(df['label'].value_counts(normalize=True))  # Check percentage distribution of True/False labels
-
-# Check the class distribution after undersampling
-print("Class distribution after undersampling:")
-print(df_resampled['label'].value_counts(normalize=True))  # Should reflect the 10% True / 90% False ratio
-
+# Applying undersampling
+df_resampled = apply_undersampling(df, strategy=UNDERSAMPLING_STRAT, method=UNDERSAMPLING_METHOD)
 
 true_count = df_resampled['label'].sum()  # Count of True labels (1)
 false_count = len(df_resampled) - true_count  # Count of False labels (0)
@@ -361,8 +359,16 @@ false_count = len(df_resampled) - true_count  # Count of False labels (0)
 ratio_true = true_count / len(df_resampled)
 ratio_false = false_count / len(df_resampled)
 
-print(f"Ratio of True: {ratio_true * 100:.2f}%")
-print(f"Ratio of False: {ratio_false * 100:.2f}%")
+if DEBUG:
+    print("Original class distribution:")
+    print(df['label'].value_counts(normalize=True))  # Check percentage distribution of True/False labels
+
+    # Check the class distribution after undersampling
+    print("Class distribution after undersampling:")
+    print(df_resampled['label'].value_counts(normalize=True))  # Should reflect the 10% True / 90% False ratio
+
+    print(f"Ratio of True: {ratio_true * 100:.2f}%")
+    print(f"Ratio of False: {ratio_false * 100:.2f}%")
 
 df = df_resampled
 # %%
