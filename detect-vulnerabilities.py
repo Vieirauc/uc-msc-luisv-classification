@@ -291,24 +291,6 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #return classification, h_concat, amp_layer, amp_layer
         return amp_layer
 
-def pad_arrays(row, max_length):
-    """
-    Pads the flattened adjacency and feature matrices to a fixed length.
-    
-    :param row: A row from the DataFrame with 'adjacency_matrix' and 'feature_matrix'.
-    :param max_length: The fixed length to pad each array to.
-    :return: A concatenated, padded 1D array.
-    """
-    adjacency_flat = row['adjacency_matrix'].flatten()
-    feature_flat = row['feature_matrix'].flatten()
-    
-    # Pad both arrays to the max_length
-    adjacency_padded = np.pad(adjacency_flat, (0, max_length - len(adjacency_flat)), mode='constant')
-    feature_padded = np.pad(feature_flat, (0, max_length - len(feature_flat)), mode='constant')
-    
-    # Return concatenated padded arrays
-    return np.concatenate([adjacency_padded, feature_padded])
-
 def apply_undersampling(df, strategy, method, n_clusters=50):
     """
     Apply undersampling to the entire dataset based on the 'label' column (which is in np.bool_ format).
@@ -321,6 +303,7 @@ def apply_undersampling(df, strategy, method, n_clusters=50):
     df['label'] = df['label'].astype(np.bool_)
     
     # Define X as the entire dataset except the label column
+    X = df.drop(columns=['label'])
     y = df['label'].astype(int)  # Convert boolean labels to integers (True -> 1, False -> 0)
     
     # Count of the minority class (True -> 1)
@@ -342,35 +325,21 @@ def apply_undersampling(df, strategy, method, n_clusters=50):
     sampling_strategy = {0: desired_majority_count, 1: minority_count}
     
     if method == "random":
-        X = df.drop(columns=['label'])
         undersampler = RandomUnderSampler(sampling_strategy=sampling_strategy, random_state=42)
     elif method == "kmeans":
         # Apply KMeans clustering-based undersampling
-        # WIP - Not yet implemented
-
-        # Find the maximum length of the flattened arrays in your dataset
-        max_length = max(df['adjacency_matrix'].apply(lambda x: x.size).max(),
-                 df['feature_matrix'].apply(lambda x: x.size).max())
-
-        df['flattened_data'] = df.apply(pad_arrays, axis=1, max_length=max_length)
-
-        X = np.vstack(df['flattened_data'].values)  # Convert the column of 1D arrays into a 2D array for clustering
+        # NOT WORKING - Not yet implemented and may not be necessary
         undersampler = ClusterCentroids(sampling_strategy=sampling_strategy, 
                                         estimator=KMeans(n_clusters=n_clusters, random_state=42))
     
-    # Apply undersampling to the dataset (for both random and kmeans methods)
+    # Apply undersampling to the dataset
     X_res, y_res = undersampler.fit_resample(X, y)
     
-    # Get the indices of the resampled dataset and map back to the original DataFrame
-    resampled_indices = np.isin(df.index, df.index[np.isin(X, X_res, assume_unique=True)])
-
-    # Create a resampled DataFrame that preserves the original structure
-    df_resampled = df.iloc[resampled_indices]
-    
-    # Update the label column in the resampled DataFrame
-    df_resampled['label'] = y_res
+    # Combine resampled X and y into a new DataFrame
+    df_resampled = pd.concat([X_res, pd.Series(y_res.astype(np.int8), name='label')], axis=1)  # Convert labels back to boolean
     
     return df_resampled
+
 
 
 
