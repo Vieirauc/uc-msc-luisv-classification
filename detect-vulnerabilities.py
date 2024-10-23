@@ -45,7 +45,7 @@ DEBUG = True
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 UNDERSAMPLING_STRAT= 0.1
-UNDERSAMPLING_METHOD = "random" # "random" # "kmeans"
+UNDERSAMPLING_METHOD = "random" #  "kmeans"
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
