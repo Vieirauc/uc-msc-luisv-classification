@@ -17,7 +17,8 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
-from imblearn.under_sampling import RandomUnderSampler
+from sklearn.cluster import KMeans
+from imblearn.under_sampling import RandomUnderSampler, ClusterCentroids
 
 from detect_vulnerabilities_vgg import VGGnet
 
@@ -40,11 +41,11 @@ else:
 ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX #ZNORM
-DEBUG = False
+DEBUG = True
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.2
-UNDERSAMPLING_METHOD = "random"
+UNDERSAMPLING_STRAT= 0.1
+UNDERSAMPLING_METHOD = "random" #  "kmeans"
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
@@ -290,7 +291,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #return classification, h_concat, amp_layer, amp_layer
         return amp_layer
 
-def apply_undersampling(df, strategy, method):
+def apply_undersampling(df, strategy, method, n_clusters=50):
     """
     Apply undersampling to the entire dataset based on the 'label' column (which is in np.bool_ format).
     
@@ -309,6 +310,7 @@ def apply_undersampling(df, strategy, method):
     minority_count = sum(y)
     if DEBUG:
         print("minority_count:", minority_count)
+
     # Total number of samples we want in the final dataset
     total_samples = minority_count / strategy
     if DEBUG:
@@ -324,6 +326,11 @@ def apply_undersampling(df, strategy, method):
     
     if method == "random":
         undersampler = RandomUnderSampler(sampling_strategy=sampling_strategy, random_state=42)
+    elif method == "kmeans":
+        # Apply KMeans clustering-based undersampling
+        # NOT WORKING - Not yet implemented and may not be necessary
+        undersampler = ClusterCentroids(sampling_strategy=sampling_strategy, 
+                                        estimator=KMeans(n_clusters=n_clusters, random_state=42))
     
     # Apply undersampling to the dataset
     X_res, y_res = undersampler.fit_resample(X, y)
@@ -333,9 +340,7 @@ def apply_undersampling(df, strategy, method):
     
     return df_resampled
 
-
-
-
+# %%
 # Load and Process dataset
 # %%
 df['label'] = torch.tensor(df['label'].astype(np.int8))
@@ -572,7 +577,7 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}"
+    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}-us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}"
     artifact_suffix += f"-sw{sample_weight_value}-size1-{type(model).__name__}-k{k_sortpooling}"
     artifact_suffix += f"-vgg-dr{dropout_rate}-c2d{conv2dChannelParam}"
 
