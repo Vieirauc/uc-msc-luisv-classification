@@ -49,7 +49,7 @@ pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 10 #2000 #500 # 1000
+num_epochs = 50 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 80 #90 #100 #80 #60 # 40
 batch_size = 10
