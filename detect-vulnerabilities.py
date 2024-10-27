@@ -44,8 +44,8 @@ normalization = MINMAX #ZNORM
 DEBUG = True
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.1
-UNDERSAMPLING_METHOD = "random" #  "kmeans"
+UNDERSAMPLING_STRAT= 0.2
+UNDERSAMPLING_METHOD = "random" #"random" #"kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
@@ -291,7 +291,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #return classification, h_concat, amp_layer, amp_layer
         return amp_layer
 
-def apply_undersampling(df, strategy, method, n_clusters=50):
+def apply_undersampling(df, strategy=None, method=None, n_clusters=None):
     """
     Apply undersampling to the entire dataset based on the 'label' column (which is in np.bool_ format).
     
@@ -299,6 +299,12 @@ def apply_undersampling(df, strategy, method, n_clusters=50):
     :param strategy: The ratio of True (vulnerable) to False (non-vulnerable) labels (e.g., 0.1 for 10% True, 90% False).
     :return: The resampled DataFrame.
     """
+
+    if method == None:
+        if DEBUG:
+            print("No undersampling applied. Returning the original dataset.")
+        return df
+    
     # Ensure the label column is in boolean format
     df['label'] = df['label'].astype(np.bool_)
     
@@ -368,14 +374,16 @@ if DEBUG:
     print("Original class distribution:")
     print(df['label'].value_counts(normalize=True))  # Check percentage distribution of True/False labels
 
-    # Check the class distribution after undersampling
-    print("Class distribution after undersampling:")
-    print(df_resampled['label'].value_counts(normalize=True))  # Should reflect the 10% True / 90% False ratio
+    if UNDERSAMPLING_METHOD != None:
+        # Check the class distribution after undersampling
+        print("Class distribution after undersampling:")
+        print(df_resampled['label'].value_counts(normalize=True))  # Should reflect the 10% True / 90% False ratio
 
     print(f"Ratio of True: {ratio_true * 100:.2f}%")
     print(f"Ratio of False: {ratio_false * 100:.2f}%")
 
 df = df_resampled
+
 # %%
 sample_weights = df['sample_weight'].values
 # %%
