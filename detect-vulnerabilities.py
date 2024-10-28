@@ -41,7 +41,7 @@ else:
 ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX #ZNORM
-DEBUG = True
+DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 UNDERSAMPLING_STRAT= 0.2
@@ -537,8 +537,8 @@ for hidden_dimension in hidden_dimension_options:
     model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
     #Class weighting
-    #loss_func = nn.CrossEntropyLoss(weight=torch.tensor([1,101000]))
-    loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
+    loss_func = nn.CrossEntropyLoss(weight=torch.tensor([1,101000]))
+    #loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     # optimizer = optim.Adam(model.parameters(), lr=0.01, weight_decay=0.001)
 
@@ -560,7 +560,7 @@ for hidden_dimension in hidden_dimension_options:
         for iter, (bg, label) in enumerate(data_loader):
             
             label = label.to(device) # Move label to the same device as the model and prediction
-            
+
             if DEBUG:
                 print("iter, epoch:", iter, epoch)
             #bg = dgl.add_self_loop(bg)
