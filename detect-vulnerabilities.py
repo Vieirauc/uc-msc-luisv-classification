@@ -562,9 +562,9 @@ for hidden_dimension in hidden_dimension_options:
             if DEBUG:
                 print("iter, epoch:", iter, epoch)
             #bg = dgl.add_self_loop(bg)
-            h_cat_amp = model(bg)
+            h_cat_amp = model(bg).to(device)
 
-            h_cat_amp = adjust_to_vgg(h_cat_amp)
+            h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
             prediction = model_vgg(h_cat_amp)
             #print(f"prediction.shape (after VGG): {prediction.shape}")
 
