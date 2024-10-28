@@ -559,13 +559,15 @@ for hidden_dimension in hidden_dimension_options:
 
         for iter, (bg, label) in enumerate(data_loader):
             
+            label = label.to(device) # Move label to the same device as the model and prediction
+            
             if DEBUG:
                 print("iter, epoch:", iter, epoch)
             #bg = dgl.add_self_loop(bg)
             h_cat_amp = model(bg).to(device)
 
             h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
-            prediction = model_vgg(h_cat_amp).to(device)
+            prediction = model_vgg(h_cat_amp)
             #print(f"prediction.shape (after VGG): {prediction.shape}")
 
             # VERIFICAR O HEATMAP DAS FEATURES
