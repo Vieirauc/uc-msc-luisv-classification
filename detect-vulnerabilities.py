@@ -537,7 +537,8 @@ for hidden_dimension in hidden_dimension_options:
     model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
     #Class weighting
-    loss_func = nn.CrossEntropyLoss(weight=torch.tensor([1,101000], device=device))
+    weight = torch.tensor([1, 101000], dtype=torch.float, device=device)
+    loss_func = nn.CrossEntropyLoss(weight=weight)
     #loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     # optimizer = optim.Adam(model.parameters(), lr=0.01, weight_decay=0.001)
