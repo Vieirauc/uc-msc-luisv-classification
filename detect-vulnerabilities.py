@@ -565,7 +565,7 @@ for hidden_dimension in hidden_dimension_options:
             h_cat_amp = model(bg).to(device)
 
             h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
-            prediction = model_vgg(h_cat_amp)
+            prediction = model_vgg(h_cat_amp).to(device)
             #print(f"prediction.shape (after VGG): {prediction.shape}")
 
             # VERIFICAR O HEATMAP DAS FEATURES
