@@ -548,9 +548,9 @@ for hidden_dimension in hidden_dimension_options:
     # Train the Model
     model.train()
     stats_dict = {
-        'epoch': [],
-        'epoch_losses' : [],
-        'epoch_accuracy' : []
+        'epoch': [epoch.cpu().item() if torch.is_tensor(epoch) else epoch for epoch in stats_dict['epoch']],
+        'epoch_losses': [loss.cpu().item() if torch.is_tensor(loss) else loss for loss in stats_dict['epoch_losses']],
+        'epoch_accuracy': [acc.cpu().item() if torch.is_tensor(acc) else acc for acc in stats_dict['epoch_accuracy']]
     }
 
     vuln_features = []
