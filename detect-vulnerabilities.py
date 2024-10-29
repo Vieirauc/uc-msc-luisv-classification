@@ -621,10 +621,10 @@ for hidden_dimension in hidden_dimension_options:
     for iter, (test_bg, test_label) in enumerate(data_loader_test):
         print("[Test Phase] iter:", iter)
 
-        h_cat_amp = model(test_bg)
+        h_cat_amp = model(test_bg).to(device)
 
-        h_cat_amp = model(test_bg)#.detach()
-        h_cat_amp = adjust_to_vgg(h_cat_amp)#.detach()
+        #h_cat_amp = model(test_bg).to(device)
+        h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)#.detach()
         prediction_test = model_vgg(h_cat_amp).detach()
 
         test_label = torch.unsqueeze(test_label, 1).detach()
