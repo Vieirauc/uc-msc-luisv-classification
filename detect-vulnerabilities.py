@@ -619,7 +619,9 @@ for hidden_dimension in hidden_dimension_options:
     data_loader_test = DataLoader(testset, batch_size=batch_size, collate_fn=collate)
     print("========= Beginning of Test Phase ===========")
     for iter, (test_bg, test_label) in enumerate(data_loader_test):
-        print("[Test Phase] iter:", iter)
+
+        if DEBUG:
+            print("[Test Phase] iter:", iter)
 
         h_cat_amp = model(test_bg).to(device)
 
@@ -656,7 +658,7 @@ for hidden_dimension in hidden_dimension_options:
 
     # accuracy = torch.mean((test_Y == torch.argmax(prediction, dim = 1)).float())
     # torch.argmax(prediction, dim = 1)
-    params = test_Y.squeeze().detach().numpy(), torch.argmax(prediction, dim = 1).float().detach().numpy()
+    params = test_Y.squeeze().detach().numpy(), torch.argmax(prediction, dim = 1).float().detach().cpu().numpy()
     report = classification_report(*params, output_dict=True)
     df = pd.DataFrame(report).transpose()
     df.to_csv('stats/classification_report{}.csv'.format(artifact_suffix))
