@@ -548,9 +548,9 @@ for hidden_dimension in hidden_dimension_options:
     # Train the Model
     model.train()
     stats_dict = {
-        'epoch': [epoch.cpu().item() if torch.is_tensor(epoch) else epoch for epoch in stats_dict['epoch']],
-        'epoch_losses': [loss.cpu().item() if torch.is_tensor(loss) else loss for loss in stats_dict['epoch_losses']],
-        'epoch_accuracy': [acc.cpu().item() if torch.is_tensor(acc) else acc for acc in stats_dict['epoch_accuracy']]
+        'epoch': [],
+        'epoch_losses': [],
+        'epoch_accuracy': []
     }
 
     vuln_features = []
@@ -595,6 +595,12 @@ for hidden_dimension in hidden_dimension_options:
 
     if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
         artifact_suffix += "-heads{}".format(heads)
+
+    stats_dict = {
+        'epoch': [epoch.cpu().item() if torch.is_tensor(epoch) else epoch for epoch in stats_dict['epoch']],
+        'epoch_losses': [loss.cpu().item() if torch.is_tensor(loss) else loss for loss in stats_dict['epoch_losses']],
+        'epoch_accuracy': [acc.cpu().item() if torch.is_tensor(acc) else acc for acc in stats_dict['epoch_accuracy']]
+    }
 
     df_stats = pd.DataFrame(stats_dict)
     df_stats.set_index('epoch', inplace=True)
