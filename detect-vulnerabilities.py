@@ -524,8 +524,11 @@ def adjust_to_vgg(samples):
     return x1
 
 # 
-def focal_loss(input, target, alpha=0.25, gamma=2.0):
-    return sigmoid_focal_loss(input, target, alpha=alpha, gamma=gamma, reduction="mean")
+def focal_loss(pred, lbl, alpha=0.25, gamma=2.0):
+    # Convert labels to one-hot encoding
+    one_hot_lbl = F.one_hot(lbl, num_classes=2).float()
+    # Compute focal loss with softmax probabilities
+    return sigmoid_focal_loss(pred, one_hot_lbl, alpha=alpha, gamma=gamma, reduction="mean")
 
 
 for hidden_dimension in hidden_dimension_options:
