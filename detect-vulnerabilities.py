@@ -19,6 +19,7 @@ import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.cluster import KMeans
 from imblearn.under_sampling import RandomUnderSampler, ClusterCentroids
+from torchvision.ops import sigmoid_focal_loss
 
 from detect_vulnerabilities_vgg import VGGnet
 
@@ -523,6 +524,9 @@ def adjust_to_vgg(samples):
     return x1
 
 # 
+def focal_loss(input, target, alpha=0.25, gamma=2.0):
+    return sigmoid_focal_loss(input, target, alpha=alpha, gamma=gamma, reduction="mean")
+
 
 for hidden_dimension in hidden_dimension_options:
     # %%
@@ -537,11 +541,14 @@ for hidden_dimension in hidden_dimension_options:
     model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
     #Class weighting
+
+    
     weight_values = [1, 20]
     weight = torch.tensor(weight_values , dtype=torch.float, device=device)
-    loss_func = nn.CrossEntropyLoss(weight=weight)
+    loss_func = lambda pred, lbl: focal_loss(pred, lbl, alpha=0.25, gamma=2)
+    #loss_func = nn.CrossEntropyLoss(weight=weight)
     #loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
     # optimizer = optim.Adam(model.parameters(), lr=0.01, weight_decay=0.001)
 
     # %%
@@ -589,7 +596,7 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}-us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}-w-{weight_values[0]}{weight_values[1]}"
+    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}-us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}-w-{weight_values[0]}{weight_values[1]}-focalloss-lr00001"
     artifact_suffix += f"-sw{sample_weight_value}-size1-{type(model).__name__}-k{k_sortpooling}"
     artifact_suffix += f"-vgg-dr{dropout_rate}-c2d{conv2dChannelParam}"
 
