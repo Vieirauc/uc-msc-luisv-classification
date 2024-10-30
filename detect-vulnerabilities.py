@@ -44,13 +44,13 @@ normalization = MINMAX #ZNORM
 DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.2
+UNDERSAMPLING_STRAT= 0.1
 UNDERSAMPLING_METHOD = "random" #"random" #"kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 50 #2000 #500 # 1000
+num_epochs = 100 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 80 #90 #100 #80 #60 # 40
 batch_size = 10
@@ -537,7 +537,7 @@ for hidden_dimension in hidden_dimension_options:
     model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
     #Class weighting
-    weight_values = [1, 101000]
+    weight_values = [1, 20]
     weight = torch.tensor(weight_values , dtype=torch.float, device=device)
     loss_func = nn.CrossEntropyLoss(weight=weight)
     #loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
