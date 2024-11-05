@@ -2,3 +2,4 @@ datasets/*.pkl
 datasets/*.csv
 .venv/
 venv/
+test_results/
