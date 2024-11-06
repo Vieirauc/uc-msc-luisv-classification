@@ -569,6 +569,9 @@ for hidden_dimension in hidden_dimension_options:
     for epoch in range(num_epochs):
         epoch_loss = 0
 
+        all_predictions = []
+        all_labels = []
+
         for iter, (bg, label) in enumerate(data_loader):
             
             label = label.to(device) # Move label to the same device as the model and prediction
@@ -592,12 +595,22 @@ for hidden_dimension in hidden_dimension_options:
             loss.backward()
             optimizer.step()
             epoch_loss += loss.detach().item()
+
+            # Store predictions and labels
+            all_predictions.extend(torch.argmax(prediction, dim=1).cpu().numpy())
+            all_labels.extend(label.cpu().numpy())
+
+
         epoch_loss /= (iter + 1)
-        accuracy = torch.mean((label == torch.argmax(prediction, dim = 1)).float())
+        all_predictions = torch.tensor(all_predictions)
+        all_labels = torch.tensor(all_labels)
+        accuracy = (all_predictions == all_labels).float().mean().item()
         print('Epoch {}, loss {:.4f}, acc {:.4f}'.format(epoch, epoch_loss, accuracy))
         stats_dict['epoch'].append(epoch)
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
+
+
 
     #artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}-us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}-w-{weight_values[0]}{weight_values[1]}"
     artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}"
