@@ -613,7 +613,7 @@ for hidden_dimension in hidden_dimension_options:
 
 
     #artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}-us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}-w-{weight_values[0]}{weight_values[1]}"
-    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}"
+    artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}e-{num_epochs}-w-{weight_values[0]}{weight_values[1]}"
     artifact_suffix += f"-sw{sample_weight_value}-size1-{type(model).__name__}-k{k_sortpooling}"
     artifact_suffix += f"-vgg-dr{dropout_rate}-c2d{conv2dChannelParam}"
 
