@@ -688,7 +688,7 @@ for hidden_dimension in hidden_dimension_options:
     df.to_csv('stats/classification_report{}.csv'.format(artifact_suffix))
     cm = confusion_matrix(*params, labels=[0,1])
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0,1])
-    disp.plot()
+    disp.plot(values_format='d')
     plt.savefig('stats/confusion-matrix{}.png'.format(artifact_suffix))
     plt.clf()
     #plt.show()
