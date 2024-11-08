@@ -546,11 +546,11 @@ for hidden_dimension in hidden_dimension_options:
     #Class weighting
 
     
-    weight_values = [0,0]
+    weight_values = [0,100]
     weight = torch.tensor(weight_values , dtype=torch.float, device=device)
     #loss_func = lambda pred, lbl: focal_loss(pred, lbl, alpha=0.25, gamma=2)
-    #loss_func = nn.CrossEntropyLoss(weight=weight)
-    loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
+    loss_func = nn.CrossEntropyLoss(weight=weight)
+    #loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     # optimizer = optim.Adam(model.parameters(), lr=0.01, weight_decay=0.001)
 
