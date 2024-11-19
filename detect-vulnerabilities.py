@@ -378,7 +378,7 @@ if DEBUG:
     if UNDERSAMPLING_METHOD != None:
         # Check the class distribution after undersampling
         print("Class distribution after undersampling:")
-        print(df_resampled['label'].value_counts(normalize=True))  # Should reflect the 10% True / 90% False ratio
+        print(df_resampled['label'].value_counts(normalize=True))  # Should reflect the ratio
 
     print(f"Ratio of True: {ratio_true * 100:.2f}%")
     print(f"Ratio of False: {ratio_false * 100:.2f}%")
@@ -546,7 +546,7 @@ for hidden_dimension in hidden_dimension_options:
     #Class weighting
 
     
-    weight_values = [0,100]
+    weight_values = [0,1000]
     weight = torch.tensor(weight_values , dtype=torch.float, device=device)
     #loss_func = lambda pred, lbl: focal_loss(pred, lbl, alpha=0.25, gamma=2)
     loss_func = nn.CrossEntropyLoss(weight=weight)
