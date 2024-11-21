@@ -45,8 +45,8 @@ normalization = MINMAX #ZNORM
 DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.1
-UNDERSAMPLING_METHOD = None #"random" #"kmeans" #None
+UNDERSAMPLING_STRAT= 0.5
+UNDERSAMPLING_METHOD = "random" #"kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
@@ -546,7 +546,7 @@ for hidden_dimension in hidden_dimension_options:
     #Class weighting
 
     
-    weight_values = [1,1000]
+    weight_values = [1,100]
     weight = torch.tensor(weight_values , dtype=torch.float, device=device)
     #loss_func = lambda pred, lbl: focal_loss(pred, lbl, alpha=0.25, gamma=2)
     loss_func = nn.CrossEntropyLoss(weight=weight)
