@@ -49,15 +49,18 @@ UNDERSAMPLING_STRAT= 0.5
 UNDERSAMPLING_METHOD = "random" #"kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
+
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
 num_epochs = 100 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 0 #90 #100 #80 #60 # 40
+CEL_weight = 0
 batch_size = 10
 k_sortpooling = 6 #24 #16
 dropout_rate = 0.1
 conv2dChannelParam = 32
+
 
 
 ##################################################################################
@@ -546,8 +549,7 @@ for hidden_dimension in hidden_dimension_options:
     #Class weighting
 
     
-    weight_values = [1,100]
-    weight = torch.tensor(weight_values , dtype=torch.float, device=device)
+    weight = torch.tensor(CEL_weight , dtype=torch.float, device=device)
     #loss_func = lambda pred, lbl: focal_loss(pred, lbl, alpha=0.25, gamma=2)
     loss_func = nn.CrossEntropyLoss(weight=weight)
     #loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
