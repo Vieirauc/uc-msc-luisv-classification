@@ -1,4 +1,0 @@
-pydot
-pandas
-graphviz
-matplotlib
