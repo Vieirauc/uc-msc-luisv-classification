@@ -45,17 +45,17 @@ normalization = MINMAX #ZNORM
 DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.5
+UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = "random" #"kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 100 #2000 #500 # 1000
+num_epochs = 1 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
-sample_weight_value = 0 #90 #100 #80 #60 # 40
-CEL_weight = [1,1]
+sample_weight_value = 70 #90 #100 #80 #60 # 40
+CEL_weight = [1,10]
 batch_size = 10
 k_sortpooling = 6 #24 #16
 dropout_rate = 0.1
