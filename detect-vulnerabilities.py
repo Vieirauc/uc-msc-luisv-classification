@@ -45,14 +45,14 @@ normalization = MINMAX #ZNORM
 DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.2
+UNDERSAMPLING_STRAT= 0.5
 UNDERSAMPLING_METHOD = "random" #"kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 100 #2000 #500 # 1000
+num_epochs = 10 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 10 #90 #100 #80 #60 # 40
 CEL_weight = [1,10]
@@ -571,10 +571,18 @@ for hidden_dimension in hidden_dimension_options:
     vuln_features = []
     non_vuln_features = []
 
+    # Create directories to store embeddings & predictions
+    embedding_dir = "output/embeddings"
+    prediction_dir = "output/predictions"
+    os.makedirs(embedding_dir, exist_ok=True)
+    os.makedirs(prediction_dir, exist_ok=True)
+
     for epoch in range(num_epochs):
         epoch_loss = 0
 
+        all_dgcnn_embeddings = []
         all_predictions = []
+        all_vgg_features = []
         all_labels = []
 
         for iter, (bg, label) in enumerate(data_loader):
@@ -585,6 +593,7 @@ for hidden_dimension in hidden_dimension_options:
                 print("iter, epoch:", iter, epoch)
             #bg = dgl.add_self_loop(bg)
             h_cat_amp = model(bg).to(device)
+            all_dgcnn_embeddings.append(h_cat_amp.cpu().detach())
 
             h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
             prediction = model_vgg(h_cat_amp)
@@ -600,11 +609,23 @@ for hidden_dimension in hidden_dimension_options:
             loss.backward()
             optimizer.step()
             epoch_loss += loss.detach().item()
-
+ 
             # Store predictions and labels
-            all_predictions.extend(torch.argmax(prediction, dim=1).cpu().numpy())
+            all_predictions.extend(torch.argmax(prediction, dim=1).detach().cpu())
             all_labels.extend(label.cpu().numpy())
+            all_vgg_features.append(prediction.cpu().detach())
 
+        # Aggregate batch results into single tensors
+        epoch_dgcnn_embeddings = torch.cat(all_dgcnn_embeddings, dim=0)
+        epoch_vgg_features = torch.cat(all_vgg_features, dim=0) # Full logits
+        epoch_vgg_predictions = torch.stack(all_predictions) # Class labels (0/1)
+        epoch_labels = torch.tensor(all_labels)
+
+        # Save results for the epoch
+        torch.save(epoch_dgcnn_embeddings, f"{embedding_dir}/dgcnn_embeddings_epoch{epoch}.pt")
+        torch.save(epoch_vgg_features, f"{prediction_dir}/vgg_features_epoch{epoch}.pt")  # Save full VGG embeddings
+        torch.save(epoch_vgg_predictions, f"{prediction_dir}/vgg_predictions_epoch{epoch}.pt")
+        torch.save(epoch_labels, f"{embedding_dir}/train_labels_epoch{epoch}.pt")
 
         epoch_loss /= (iter + 1)
         all_predictions = torch.tensor(all_predictions)
@@ -614,6 +635,9 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch'].append(epoch)
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
+
+        
+
 
 
 
@@ -685,19 +709,15 @@ for hidden_dimension in hidden_dimension_options:
     print(f"prediction.shape: {prediction.shape}")
     print(f"test_Y.shape: {test_Y.shape}")
 
-    # accuracy = torch.mean((test_Y == torch.argmax(prediction, dim = 1)).float())
-    # torch.argmax(prediction, dim = 1)
-    params = test_Y.squeeze().detach().numpy(), torch.argmax(prediction, dim = 1).float().detach().cpu().numpy()
+    params = test_Y.squeeze().detach().numpy(), torch.argmax(prediction, dim = 1).float().detach().numpy()
     report = classification_report(*params, output_dict=True)
     df = pd.DataFrame(report).transpose()
     df.to_csv('stats/classification_report{}.csv'.format(artifact_suffix))
     cm = confusion_matrix(*params, labels=[0,1])
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0,1])
-    disp.plot(values_format='d')
+    disp.plot()
     plt.savefig('stats/confusion-matrix{}.png'.format(artifact_suffix))
     plt.clf()
-    #plt.show()
-    # print(accuracy)
 
     # Save Train Features
     # 11/07 train_X, train_Y = map(list, zip(*trainset))
