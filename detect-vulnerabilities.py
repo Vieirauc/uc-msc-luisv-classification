@@ -636,11 +636,6 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-        
-
-
-
-
     artifact_suffix = f"-{project}-{version}-{hidden_dimension}-n-{normalization}-e-{num_epochs}-us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}-w-{CEL_weight[0]}_{CEL_weight[1]}"
     #artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}-e-{num_epochs}-w-{weight_values[0]}{weight_values[1]}"
     artifact_suffix += f"-sw{sample_weight_value}-size1-{type(model).__name__}-k{k_sortpooling}"
@@ -708,6 +703,9 @@ for hidden_dimension in hidden_dimension_options:
     print("========= End of Test Phase ===========")
     print(f"prediction.shape: {prediction.shape}")
     print(f"test_Y.shape: {test_Y.shape}")
+
+    #TypeError: can't convert cuda:0 device type tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first.
+    prediction, test_Y = prediction.cpu().detach().numpy(), test_Y.cpu().detach().numpy()
 
     params = test_Y.squeeze().detach().numpy(), torch.argmax(prediction, dim = 1).float().detach().numpy()
     report = classification_report(*params, output_dict=True)

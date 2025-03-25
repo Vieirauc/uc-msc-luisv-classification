@@ -6,3 +6,5 @@ test_results/__pycache__/
 __pycache__/
 __pycache__/
 output/
+git-filter-repo
+stats/
