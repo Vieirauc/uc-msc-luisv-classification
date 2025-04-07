@@ -7,7 +7,7 @@ from sklearn.manifold import TSNE
 # Load embeddings
 embedding_dir = "output/embeddings"
 prediction_dir = "output/predictions"
-epoch = 0  # Change epoch as needed
+epoch = 5  # Change epoch as needed
 
 # Load stored embeddings, predictions, and labels
 dgcnn_embeddings = torch.load(f"{embedding_dir}/dgcnn_embeddings_epoch{epoch}.pt")
@@ -75,6 +75,8 @@ colors = ["green", "red", "blue", "orange"]
 # ==============================
 pca = PCA(n_components=2)
 pca_result_dgcnn = pca.fit_transform(all_dgcnn_embeddings)
+
+print(pca.explained_variance_ratio_)
 
 plt.figure(figsize=(8, 6))
 for i, label in enumerate(np.unique(labels_dgcnn)):

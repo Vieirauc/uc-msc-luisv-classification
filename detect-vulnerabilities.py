@@ -45,7 +45,7 @@ normalization = MINMAX #ZNORM
 DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
-UNDERSAMPLING_STRAT= 0.5
+UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = "random" #"kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
@@ -622,10 +622,11 @@ for hidden_dimension in hidden_dimension_options:
         epoch_labels = torch.tensor(all_labels)
 
         # Save results for the epoch
-        torch.save(epoch_dgcnn_embeddings, f"{embedding_dir}/dgcnn_embeddings_epoch{epoch}.pt")
-        torch.save(epoch_vgg_features, f"{prediction_dir}/vgg_features_epoch{epoch}.pt")  # Save full VGG embeddings
-        torch.save(epoch_vgg_predictions, f"{prediction_dir}/vgg_predictions_epoch{epoch}.pt")
-        torch.save(epoch_labels, f"{embedding_dir}/train_labels_epoch{epoch}.pt")
+        if epoch % 10 == 0:
+            torch.save(epoch_dgcnn_embeddings, f"{embedding_dir}/dgcnn_embeddings_epoch{epoch}.pt")
+            torch.save(epoch_vgg_features, f"{prediction_dir}/vgg_features_epoch{epoch}.pt")  # Save full VGG embeddings
+            torch.save(epoch_vgg_predictions, f"{prediction_dir}/vgg_predictions_epoch{epoch}.pt")
+            torch.save(epoch_labels, f"{embedding_dir}/train_labels_epoch{epoch}.pt")
 
         epoch_loss /= (iter + 1)
         all_predictions = torch.tensor(all_predictions)
@@ -705,9 +706,9 @@ for hidden_dimension in hidden_dimension_options:
     print(f"test_Y.shape: {test_Y.shape}")
 
     #TypeError: can't convert cuda:0 device type tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first.
-    prediction, test_Y = prediction.cpu().detach().numpy(), test_Y.cpu().detach().numpy()
 
-    params = test_Y.squeeze().detach().numpy(), torch.argmax(prediction, dim = 1).float().detach().numpy()
+    params = test_Y.squeeze().cpu().detach().numpy(), torch.argmax(prediction, dim = 1).float().cpu().detach().numpy()
+
     report = classification_report(*params, output_dict=True)
     df = pd.DataFrame(report).transpose()
     df.to_csv('stats/classification_report{}.csv'.format(artifact_suffix))

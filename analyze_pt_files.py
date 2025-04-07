@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 
+'''
 # Load embeddings
 embedding_dir = "output/embeddings"
 prediction_dir = "output/predictions"
@@ -25,7 +26,7 @@ labels_np = labels.numpy()
 # Generate confusion matrix
 cm = confusion_matrix(labels_np, vgg_predictions_np, labels=[0, 1])
 
-'''
+
 # Display and save confusion matrix
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
 disp.plot()
@@ -46,6 +47,7 @@ print(f"Confusion Matrix and classification report saved for epoch {epoch}.")
 #vgg_features_np = vgg_features_np.reshape(vgg_features_np.shape[0], -1)
 #vgg_predictions_np = vgg_predictions_np.reshape(vgg_predictions_np.shape[0], -1)
 
+'''
 print(f'VGG Features head: {vgg_features_np[:10]}')
 print(f'VGG Predictions head: {vgg_predictions_np[:10]}')
 print(f'Labels head: {labels_np[:10]}')
@@ -92,7 +94,7 @@ tp_dgcnn = dgcnn_np[true_positive]
 fp_dgcnn = dgcnn_np[false_positive]
 tn_dgcnn = dgcnn_np[true_negative]
 fn_dgcnn = dgcnn_np[false_negative]
-
+'''
 
 # print first 10 dgcnn embeddings
 #print(dgcnn_np[:10])
@@ -107,5 +109,21 @@ fn_dgcnn = dgcnn_np[false_negative]
 #print(vgg_features_np[:10])
 #print(vgg_predictions_np[:10])
 
+def remove_size_one(file_path):
+    # Carrega o arquivo original
+    df = pd.read_csv(file_path, sep=";", dtype={"size": int})
 
+    # Remove os grafos com tamanho 1
+    df_filtered = df[df["size"] > 1]
 
+    # Salva o novo CSV
+    output_path = file_path.replace(".csv", "_filtered.csv")
+    df_filtered.to_csv(output_path, sep=";", index=False)
+    print(f"Arquivo salvo em: {output_path}")
+    print(f"Linhas antes: {len(df)}, depois: {len(df_filtered)}")
+
+def main():
+    remove_size_one("datasets/cfg-dataset-linux-v0.5.csv")
+
+if __name__ == "__main__":
+    main()
