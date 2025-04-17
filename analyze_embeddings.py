@@ -1,13 +1,19 @@
+import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 # Load embeddings
-embedding_dir = "output/embeddings"
-prediction_dir = "output/predictions"
-epoch = 5  # Change epoch as needed
+embedding_dir = "output/output_US_0_2/output_filtered/embeddings"
+prediction_dir = "output/output_US_0_2/output_filtered/predictions"
+epoch = 10  # Change epoch as needed
 
 # Load stored embeddings, predictions, and labels
 dgcnn_embeddings = torch.load(f"{embedding_dir}/dgcnn_embeddings_epoch{epoch}.pt")
@@ -51,8 +57,8 @@ fn_vgg = vgg_features_np[false_negative]
 labels_dgcnn = np.concatenate([
     np.full(len(tp_dgcnn), 0),  # True Positive
     np.full(len(fp_dgcnn), 1),  # False Positive
-    np.full(len(tn_dgcnn), 2),  # True Negative
     np.full(len(fn_dgcnn), 3),  # False Negative
+    np.full(len(tn_dgcnn), 2),  # True Negative
 ])
 
 labels_vgg = np.concatenate([
@@ -67,8 +73,43 @@ all_dgcnn_embeddings = np.concatenate([tp_dgcnn, fp_dgcnn, tn_dgcnn, fn_dgcnn])
 all_vgg_embeddings = np.concatenate([tp_vgg, fp_vgg, tn_vgg, fn_vgg])
 
 # Define color mapping
-label_names = ["True Positive", "False Positive", "True Negative", "False Negative"]
-colors = ["green", "red", "blue", "orange"]
+label_names = ["True Positive", "False Positive", "False Negative", "True Negative"]
+colors = ["green", "red", "orange", "blue"]
+
+
+def generate_trainset_report_and_confusion_matrix(predictions, labels, save_path="output/output_US_0_2/output_filtered/", suffix="train"):
+    os.makedirs(save_path, exist_ok=True)
+
+    # Converte para tensores, se necessário
+    y_true = labels.squeeze()
+    y_pred = predictions
+
+    # Se for logit, aplica argmax
+    if y_pred.ndim > 1 and y_pred.shape[1] > 1:
+        y_pred = torch.argmax(y_pred, dim=1)
+
+    # Garante que está tudo no formato certo
+    y_pred = y_pred.float()
+    y_true_np = y_true.cpu().detach().numpy()
+    y_pred_np = y_pred.cpu().detach().numpy()
+
+    # Gera classification report
+    report = classification_report(y_true_np, y_pred_np, output_dict=True)
+    df = pd.DataFrame(report).transpose()
+    df.to_csv(f"{save_path}/classification_report_{suffix}.csv")
+
+    # Gera confusion matrix
+    cm = confusion_matrix(y_true_np, y_pred_np, labels=[0, 1])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
+    disp.plot()
+    plt.title(f"Confusion Matrix ({suffix})")
+    plt.savefig(f"{save_path}/confusion_matrix_{suffix}.png")
+    plt.clf()
+
+# Chamada direta (após carregar os .pt)
+generate_trainset_report_and_confusion_matrix(torch.tensor(vgg_predictions_np), torch.tensor(labels_np), 
+                                              save_path="output/output_US_0_2/output_non_filtered/", suffix=f"train_epoch{epoch}")
+
 
 # ==============================
 # 1. PCA Visualization - DGCNN Embeddings
@@ -87,6 +128,7 @@ plt.legend()
 plt.savefig(f"{embedding_dir}/pca_dgcnn_epoch{epoch}.png")
 plt.show()
 
+'''
 # ==============================
 # 2.1 PCA Visualization - VGG Feature Space
 # ==============================
@@ -100,9 +142,10 @@ plt.title("PCA - VGG Feature Space")
 plt.legend()
 plt.savefig(f"{embedding_dir}/pca_vgg_epoch{epoch}.png")
 plt.show()
+'''
 
 
-
+'''
 # ==============================
 # 3. t-SNE Visualization - DGCNN Embeddings
 # ==============================
@@ -117,7 +160,9 @@ plt.title("t-SNE - DGCNN Embeddings")
 plt.legend()
 plt.savefig(f"{embedding_dir}/tsne_dgcnn_epoch{epoch}.png")
 plt.show()
+'''
 
+'''
 # ==============================
 # 4. t-SNE Visualization - VGG Feature Space
 # ==============================
@@ -131,3 +176,52 @@ plt.title("t-SNE - VGG Feature Space")
 plt.legend()
 plt.savefig(f"{embedding_dir}/tsne_vgg_epoch{epoch}.png")
 plt.show()
+'''
+
+# PCA com n componentes (por exemplo, 20)
+n_components = 20
+pca = PCA(n_components=n_components)
+pca_dgcnn = pca.fit_transform(dgcnn_np)
+
+# Treino/teste + Random Forest
+X_train, X_test, y_train, y_test = train_test_split(pca_dgcnn, labels_np, test_size=0.3, random_state=42)
+clf = RandomForestClassifier(n_estimators=100)
+clf.fit(X_train, y_train)
+
+y_pred = clf.predict(X_test)
+print(classification_report(y_test, y_pred))
+
+
+# Salvar os resultados da Random Forest
+rf_dir = "output/output_US_0_2/output_filtered/random_forest"
+#rf_dir = os.path.join(os.path.dirname(embedding_dir), "random_forest")
+os.makedirs(rf_dir, exist_ok=True)
+
+# Salva classification report
+report_rf = classification_report(y_test, y_pred, output_dict=True)
+df_report_rf = pd.DataFrame(report_rf).transpose()
+df_report_rf.to_csv(os.path.join(rf_dir, f"classification_report_random_forest_test_epoch{epoch}.csv"))
+
+# Salva confusion matrix
+cm_rf = confusion_matrix(y_test, y_pred, labels=[0, 1])
+disp_rf = ConfusionMatrixDisplay(confusion_matrix=cm_rf, display_labels=[0, 1])
+disp_rf.plot()
+plt.title(f"Confusion Matrix - Random Forest (Test Epoch {epoch})")
+plt.savefig(os.path.join(rf_dir, f"confusion_matrix_random_forest_test_epoch{epoch}.png"))
+plt.clf()
+
+
+'''
+# PCA com n componentes (por exemplo, 20)
+n_components = 20
+pca = PCA(n_components=n_components)
+pca_dgcnn = pca.fit_transform(dgcnn_np)
+
+# Treino/teste + Random Forest
+X_train, X_test, y_train, y_test = train_test_split(pca_dgcnn, labels_np, test_size=0.3, random_state=42)
+clf = RandomForestClassifier(n_estimators=100)
+clf.fit(X_train, y_train)
+
+y_pred = clf.predict(X_test)
+print(classification_report(y_test, y_pred))
+'''

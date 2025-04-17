@@ -26,9 +26,10 @@ from detect_vulnerabilities_vgg import VGGnet
 # %%
 
 project = 'linux' # 'gecko-dev'#'linux'
-version = 'v0.5'
+version = 'v0.5_filtered'
 
 #cfg-dataset-linux-v0.5 has 101513 entries
+#cfg-dataset-linux-v0.5_filtered has 65685 entries
 
 dataset_name = 'datasets/cfg-dataset-{}-{}'.format(project, version)
 if not os.path.isfile(dataset_name + '.pkl'):
@@ -42,7 +43,7 @@ else:
 ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX #ZNORM
-DEBUG = False
+DEBUG = True
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 UNDERSAMPLING_STRAT= 0.2
@@ -54,8 +55,8 @@ heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
 num_epochs = 11 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
-sample_weight_value = 10 #90 #100 #80 #60 # 40
-CEL_weight = [1,10]
+sample_weight_value = 0 #90 #100 #80 #60 # 40
+CEL_weight = [1,1]
 batch_size = 10
 k_sortpooling = 6 #24 #16
 dropout_rate = 0.1
@@ -245,8 +246,8 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
             bs = h.shape[0]  # bs is the number of nodes in the graph
             #print("bs", bs)
 
-            if DEBUG:
-                print(f"Graph with {bs} nodes and feature size {h.shape}")
+            #if DEBUG:
+            #    print(f"Graph with {bs} nodes and feature size {h.shape}")
 
             h1 = F.relu(self.conv1(g, h))
             #print("h1", h1.shape)
@@ -295,60 +296,54 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         #return classification, h_concat, amp_layer, amp_layer
         return amp_layer
 
-def apply_undersampling(df, strategy=None, method=None, n_clusters=None):
+def apply_undersampling(df, strategy=0.5, method="random", n_clusters=None):
     """
-    Apply undersampling to the entire dataset based on the 'label' column (which is in np.bool_ format).
+    Apply undersampling to the dataset based on the 'label' column.
     
-    :param df: The dataset containing all columns including 'label'.
-    :param strategy: The ratio of True (vulnerable) to False (non-vulnerable) labels (e.g., 0.1 for 10% True, 90% False).
-    :return: The resampled DataFrame.
+    :param df: DataFrame with a boolean or binary 'label' column (1 = vulnerable, 0 = non-vulnerable).
+    :param strategy: Desired ratio of positives to the total dataset (e.g., 0.2 = 20% vulnerable).
+    :param method: 'random' or 'kmeans' undersampling.
+    :param n_clusters: Used if method is 'kmeans'.
+    :return: Resampled DataFrame.
     """
-
-    if method == None:
+    if method is None:
         if DEBUG:
-            print("No undersampling applied. Returning the original dataset.")
+            print("No undersampling applied.")
         return df
-    
-    # Ensure the label column is in boolean format
-    df['label'] = df['label'].astype(np.bool_)
-    
-    # Define X as the entire dataset except the label column
-    X = df.drop(columns=['label'])
-    y = df['label'].astype(int)  # Convert boolean labels to integers (True -> 1, False -> 0)
-    
-    # Count of the minority class (True -> 1)
-    minority_count = sum(y)
-    if DEBUG:
-        print("minority_count:", minority_count)
 
-    # Total number of samples we want in the final dataset
-    total_samples = minority_count / strategy
+    df['label'] = df['label'].astype(np.bool_)  # Ensures correct type
+    X = df.drop(columns=['label'])
+    y = df['label'].astype(int)
+
+    minority_count = y.sum()
+    total_desired = round(minority_count / strategy)
+    desired_majority_count = total_desired - minority_count
+
     if DEBUG:
-        print("total_samples:", total_samples)
-    
-    # Desired majority count (False -> 0)
-    desired_majority_count = int(total_samples - minority_count)
-    if DEBUG:
-        print("desired_majority_count:", desired_majority_count)
-    
-    # Define the sampling strategy
+        print(f"Minority count: {minority_count}")
+        print(f"Desired total: {total_desired}")
+        print(f"Desired majority: {desired_majority_count}")
+
+    # Enforce a max cap to prevent over-removal in small datasets
+    actual_majority_count = sum(y == 0)
+    desired_majority_count = min(desired_majority_count, actual_majority_count)
+
     sampling_strategy = {0: desired_majority_count, 1: minority_count}
-    
+
     if method == "random":
         undersampler = RandomUnderSampler(sampling_strategy=sampling_strategy, random_state=42)
     elif method == "kmeans":
-        # Apply KMeans clustering-based undersampling
         # NOT WORKING - Not yet implemented and may not be necessary
         undersampler = ClusterCentroids(sampling_strategy=sampling_strategy, 
-                                        estimator=KMeans(n_clusters=n_clusters, random_state=42))
-    
-    # Apply undersampling to the dataset
+                                        estimator=KMeans(n_clusters=n_clusters or 10, random_state=42))
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+
     X_res, y_res = undersampler.fit_resample(X, y)
-    
-    # Combine resampled X and y into a new DataFrame
-    df_resampled = pd.concat([X_res, pd.Series(y_res.astype(np.int8), name='label')], axis=1)  # Convert labels back to boolean
-    
+    df_resampled = pd.concat([X_res, pd.Series(y_res, name='label')], axis=1)
+
     return df_resampled
+
 
 # %%
 # Load and Process dataset
@@ -364,7 +359,7 @@ def collate(samples):
     #return batched_graph, torch.tensor(labels)
     return graphs, torch.tensor(labels)
 
-
+print("Number of samples in the dataset before undersampling:", len(df))
 # Applying undersampling
 df_resampled = apply_undersampling(df, strategy=UNDERSAMPLING_STRAT, method=UNDERSAMPLING_METHOD)
 
@@ -385,7 +380,9 @@ if DEBUG:
 
     print(f"Ratio of True: {ratio_true * 100:.2f}%")
     print(f"Ratio of False: {ratio_false * 100:.2f}%")
-
+    #print number of samples
+    
+print("Number of samples in the dataset after undersampling:", len(df_resampled))
 df = df_resampled
 
 # %%
@@ -395,6 +392,7 @@ random_seed = 42
 test_split = 0.3
 # Creating data indices for training and validation splits:
 dataset_size = len(df)
+print("dataset_size:", dataset_size)
 indices = np.arange(dataset_size)
 split = int(np.floor(test_split * dataset_size))
 np.random.seed(random_seed)
@@ -589,8 +587,8 @@ for hidden_dimension in hidden_dimension_options:
             
             label = label.to(device) # Move label to the same device as the model and prediction
 
-            if DEBUG:
-                print("iter, epoch:", iter, epoch)
+            #if DEBUG:
+            #    print("iter, epoch:", iter, epoch)
             #bg = dgl.add_self_loop(bg)
             h_cat_amp = model(bg).to(device)
             all_dgcnn_embeddings.append(h_cat_amp.cpu().detach())
