@@ -20,6 +20,7 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 from sklearn.cluster import KMeans
 from imblearn.under_sampling import RandomUnderSampler, ClusterCentroids
 from torchvision.ops import sigmoid_focal_loss
+from torch_geometric.nn import GCNConv
 
 from detect_vulnerabilities_vgg import VGGnet
 
@@ -27,11 +28,12 @@ from detect_vulnerabilities_vgg import VGGnet
 
 project = 'linux' # 'gecko-dev'#'linux'
 version = 'v0.5_filtered'
+graph_type = 'cfg' #
 
 #cfg-dataset-linux-v0.5 has 101513 entries
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
 
-dataset_name = 'datasets/cfg-dataset-{}-{}'.format(project, version)
+dataset_name = "{}-dataset-{}-{}".format(graph_type, project, version)
 if not os.path.isfile(dataset_name + '.pkl'):
     df = load_dataset(dataset_name)
     df = df.to_pickle(sys.argv[1] + '.pkl')
@@ -47,7 +49,7 @@ DEBUG = True
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 UNDERSAMPLING_STRAT= 0.2
-UNDERSAMPLING_METHOD = "random" #"kmeans" #None
+UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 
@@ -531,6 +533,22 @@ def focal_loss(pred, lbl, alpha=0.25, gamma=2.0):
     # Compute focal loss with softmax probabilities
     return sigmoid_focal_loss(pred, one_hot_lbl, alpha=alpha, gamma=gamma, reduction="mean")
 
+class GCNEncoder(torch.nn.Module):
+  
+  def __init__(self, in_channels, hidden_size, out_channels, dropout):
+    super(GCNEncoder, self).__init__()
+    self.conv1 = GCNConv(in_channels, hidden_size)
+    self.conv2 = GCNConv(hidden_size, out_channels)
+    self.dropout = nn.Dropout(dropout)
+
+  # Our model will take the feature matrix X and the edge list
+  # representation of the graph as inputs.
+  def forward(self, x, edge_index):
+    x = self.conv1(x, edge_index).relu()
+    x = self.dropout(x)
+    return self.conv2(x, edge_index)
+
+
 
 for hidden_dimension in hidden_dimension_options:
     # %%
@@ -546,11 +564,10 @@ for hidden_dimension in hidden_dimension_options:
 
     #Class weighting
 
-    
-    
     #loss_func = lambda pred, lbl: focal_loss(pred, lbl, alpha=0.25, gamma=2)
     if CEL_weight == 0:
         weight_values = [1, 1]
+
     weight = torch.tensor(CEL_weight , dtype=torch.float, device=device)
     loss_func = nn.CrossEntropyLoss(weight=weight)
     #loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
@@ -569,18 +586,35 @@ for hidden_dimension in hidden_dimension_options:
     vuln_features = []
     non_vuln_features = []
 
-    # Create directories to store embeddings & predictions
-    embedding_dir = "output/embeddings"
-    prediction_dir = "output/predictions"
+    # Create directories to store results
+    def format_hidden_dim(hd):
+        return '-'.join(map(str, hd)) if isinstance(hd, list) else str(hd)
+
+    artifact_suffix = f"{project}_{version}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD or 'none'}"
+    artifact_suffix += f"_w{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_model-{type(model).__name__}_k{k_sortpooling}"
+    artifact_suffix += f"_vgg-drop{dropout_rate}_c2d{conv2dChannelParam}"
+
+    if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
+        artifact_suffix += f"_heads{heads}"
+
+    output_base_dir = "output/runs"
+    run_output_dir = os.path.join(output_base_dir, artifact_suffix)
+    embedding_dir = os.path.join(run_output_dir, "embeddings")
+    prediction_dir = os.path.join(run_output_dir, "predictions")
+    stats_dir = os.path.join(run_output_dir, "stats")
+
     os.makedirs(embedding_dir, exist_ok=True)
     os.makedirs(prediction_dir, exist_ok=True)
+    os.makedirs(stats_dir, exist_ok=True)
+
+    print("========= Beginning of Training Phase ===========")
 
     for epoch in range(num_epochs):
         epoch_loss = 0
 
-        all_dgcnn_embeddings = []
+        #all_dgcnn_embeddings = []
         all_predictions = []
-        all_vgg_features = []
+        #all_vgg_features = []
         all_labels = []
 
         for iter, (bg, label) in enumerate(data_loader):
@@ -591,7 +625,7 @@ for hidden_dimension in hidden_dimension_options:
             #    print("iter, epoch:", iter, epoch)
             #bg = dgl.add_self_loop(bg)
             h_cat_amp = model(bg).to(device)
-            all_dgcnn_embeddings.append(h_cat_amp.cpu().detach())
+            #all_dgcnn_embeddings.append(h_cat_amp.cpu().detach())
 
             h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
             prediction = model_vgg(h_cat_amp)
@@ -611,20 +645,20 @@ for hidden_dimension in hidden_dimension_options:
             # Store predictions and labels
             all_predictions.extend(torch.argmax(prediction, dim=1).detach().cpu())
             all_labels.extend(label.cpu().numpy())
-            all_vgg_features.append(prediction.cpu().detach())
+            #all_vgg_features.append(prediction.cpu().detach())
 
         # Aggregate batch results into single tensors
-        epoch_dgcnn_embeddings = torch.cat(all_dgcnn_embeddings, dim=0)
-        epoch_vgg_features = torch.cat(all_vgg_features, dim=0) # Full logits
-        epoch_vgg_predictions = torch.stack(all_predictions) # Class labels (0/1)
+        #epoch_dgcnn_embeddings = torch.cat(all_dgcnn_embeddings, dim=0)
+        #epoch_vgg_features = torch.cat(all_vgg_features, dim=0) # Full logits
+        #epoch_vgg_predictions = torch.stack(all_predictions) # Class labels (0/1)
         epoch_labels = torch.tensor(all_labels)
 
         # Save results for the epoch
-        if epoch % 10 == 0:
-            torch.save(epoch_dgcnn_embeddings, f"{embedding_dir}/dgcnn_embeddings_epoch{epoch}.pt")
-            torch.save(epoch_vgg_features, f"{prediction_dir}/vgg_features_epoch{epoch}.pt")  # Save full VGG embeddings
-            torch.save(epoch_vgg_predictions, f"{prediction_dir}/vgg_predictions_epoch{epoch}.pt")
-            torch.save(epoch_labels, f"{embedding_dir}/train_labels_epoch{epoch}.pt")
+        #if epoch % 10 == 0:
+            #torch.save(epoch_dgcnn_embeddings, f"{embedding_dir}/dgcnn_embeddings_epoch{epoch}.pt")
+            #torch.save(epoch_vgg_features, f"{prediction_dir}/vgg_features_epoch{epoch}.pt")  # Save full VGG embeddings
+            #torch.save(epoch_vgg_predictions, f"{prediction_dir}/vgg_predictions_epoch{epoch}.pt")
+            #torch.save(epoch_labels, f"{embedding_dir}/train_labels_epoch{epoch}.pt")
 
         epoch_loss /= (iter + 1)
         all_predictions = torch.tensor(all_predictions)
@@ -635,13 +669,7 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-    artifact_suffix = f"-{project}-{version}-{hidden_dimension}-n-{normalization}-e-{num_epochs}-us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD}-w-{CEL_weight[0]}_{CEL_weight[1]}"
-    #artifact_suffix = f"-{project}-{version}-{hidden_dimension}n-{normalization}-e-{num_epochs}-w-{weight_values[0]}{weight_values[1]}"
-    artifact_suffix += f"-sw{sample_weight_value}-size1-{type(model).__name__}-k{k_sortpooling}"
-    artifact_suffix += f"-vgg-dr{dropout_rate}-c2d{conv2dChannelParam}"
-
-    if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
-        artifact_suffix += "-heads{}".format(heads)
+    print("========= End of Training Phase ===========")
 
     stats_dict = {
         'epoch': [epoch.cpu().item() if torch.is_tensor(epoch) else epoch for epoch in stats_dict['epoch']],
@@ -654,7 +682,8 @@ for hidden_dimension in hidden_dimension_options:
     df_stats['epoch_accuracy'] = df_stats['epoch_accuracy'].astype(np.float64)
     sns.lineplot(data=df_stats)
     os.makedirs('stats', exist_ok=True)
-    plt.savefig('stats/train-results{}.png'.format(artifact_suffix))
+    plt.savefig(os.path.join(stats_dir, f"train-results_epoch{epoch}.png"))
+
     # %%
     #Evaluate Model!
     model.eval()
@@ -664,7 +693,14 @@ for hidden_dimension in hidden_dimension_options:
     prediction_list = []
     test_Y_list = []
 
+    # Storage lists
+    all_dgcnn_embeddings_test = []
+    all_vgg_features_test = []
+    all_predictions_test = []
+    all_labels_test = []
+
     data_loader_test = DataLoader(testset, batch_size=batch_size, collate_fn=collate)
+
     print("========= Beginning of Test Phase ===========")
     for iter, (test_bg, test_label) in enumerate(data_loader_test):
 
@@ -672,8 +708,11 @@ for hidden_dimension in hidden_dimension_options:
             print("[Test Phase] iter:", iter)
 
         h_cat_amp = model(test_bg).to(device)
+        all_dgcnn_embeddings_test.append(h_cat_amp.cpu().detach())
 
         #h_cat_amp = model(test_bg).to(device)
+
+        # Prepare for VGG and predict
         h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)#.detach()
         prediction_test = model_vgg(h_cat_amp).detach()
 
@@ -681,6 +720,12 @@ for hidden_dimension in hidden_dimension_options:
 
         prediction_list.append(prediction_test)
         test_Y_list.append(test_label)
+
+        # Store everything
+        all_vgg_features_test.append(prediction_test.cpu())
+        all_predictions_test.extend(torch.argmax(prediction_test, dim=1).cpu())
+        all_labels_test.extend(test_label.cpu())
+
 
         if iter % 10 == 0:
             if prediction is None:
@@ -701,8 +746,22 @@ for hidden_dimension in hidden_dimension_options:
         test_Y = torch.cat((test_Y, test_Y_aux))
 
     print("========= End of Test Phase ===========")
+
+
     print(f"prediction.shape: {prediction.shape}")
     print(f"test_Y.shape: {test_Y.shape}")
+
+    # Convert lists to tensors
+    dgcnn_embeddings_test = torch.cat(all_dgcnn_embeddings_test, dim=0)
+    vgg_features_test = torch.cat(all_vgg_features_test, dim=0)
+    vgg_predictions_test = torch.tensor(all_predictions_test)
+    test_labels = torch.tensor(all_labels_test)
+
+    # Save
+    torch.save(dgcnn_embeddings_test, f"{embedding_dir}/dgcnn_embeddings_test.pt")
+    torch.save(vgg_features_test, f"{prediction_dir}/vgg_features_test.pt")
+    torch.save(vgg_predictions_test, f"{prediction_dir}/vgg_predictions_test.pt")
+    torch.save(test_labels, f"{embedding_dir}/test_labels.pt")
 
     #TypeError: can't convert cuda:0 device type tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first.
 
@@ -710,11 +769,11 @@ for hidden_dimension in hidden_dimension_options:
 
     report = classification_report(*params, output_dict=True)
     df = pd.DataFrame(report).transpose()
-    df.to_csv('stats/classification_report{}.csv'.format(artifact_suffix))
+    df.to_csv(os.path.join(stats_dir, f"classification_report_epoch{epoch}.csv"))
     cm = confusion_matrix(*params, labels=[0,1])
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0,1])
     disp.plot()
-    plt.savefig('stats/confusion-matrix{}.png'.format(artifact_suffix))
+    plt.savefig(os.path.join(stats_dir, f"confusion-matrix_epoch{epoch}.png"))
     plt.clf()
 
     # Save Train Features

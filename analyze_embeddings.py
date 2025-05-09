@@ -27,6 +27,8 @@ vgg_features_np = vgg_features.numpy()
 vgg_predictions_np = vgg_predictions.numpy()
 labels_np = labels.numpy()
 
+# NOTE: vgg_predictions is basically equal to torch.argmax(vgg_features_np, dim=1)
+
 # Flatten embeddings (Convert from 4D to 2D)
 
 #Shape before: (3709, 32, 30, 128)
