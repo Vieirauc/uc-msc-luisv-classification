@@ -34,11 +34,14 @@ graph_type = 'cfg' #
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
 
 dataset_name = "{}-dataset-{}-{}".format(graph_type, project, version)
-if not os.path.isfile(dataset_name + '.pkl'):
-    df = load_dataset(dataset_name)
-    df = df.to_pickle(sys.argv[1] + '.pkl')
+#dataset_name = 'cfg-dataset-linux-sample1k'
+dataset_path = 'datasets/'
+
+if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
+    df = load_dataset(dataset_path + dataset_name)
+    df.to_pickle(dataset_path + dataset_name + '.pkl')
 else:
-    df = pd.read_pickle(dataset_name + '.pkl')
+    df = pd.read_pickle(dataset_path + dataset_name  + '.pkl')
 
 # %%
 
