@@ -33,12 +33,15 @@ graph_type = 'cfg' #
 #cfg-dataset-linux-v0.5 has 101513 entries
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
 
-dataset_name = "{}-dataset-{}-{}".format(graph_type, project, version)
-if not os.path.isfile(dataset_name + '.pkl'):
-    df = load_dataset(dataset_name)
-    df = df.to_pickle(sys.argv[1] + '.pkl')
+#dataset_name = "{}-dataset-{}-{}".format(graph_type, project, version)
+dataset_name = 'cfg-dataset-linux-sample1k'
+dataset_path = 'datasets/'
+
+if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
+    df = load_dataset(dataset_path + dataset_name)
+    df.to_pickle(dataset_path + dataset_name + '.pkl')
 else:
-    df = pd.read_pickle(dataset_name + '.pkl')
+    df = pd.read_pickle(dataset_path + dataset_name  + '.pkl')
 
 # %%
 
@@ -55,7 +58,7 @@ pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 11 #2000 #500 # 1000
+num_epochs = 10 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 0 #90 #100 #80 #60 # 40
 CEL_weight = [1,1]
@@ -67,123 +70,6 @@ conv2dChannelParam = 32
 
 
 ##################################################################################
-
-class GraphClassifier(nn.Module):
-    def __init__(self, in_dim, hidden_dim, n_classes, sortpooling_k=3):
-        super(GraphClassifier, self).__init__()
-        self.conv1 = GraphConv(in_dim, hidden_dim, allow_zero_in_degree=True)
-        self.conv2 = GraphConv(hidden_dim, hidden_dim, allow_zero_in_degree=True)
-        self.classify = nn.Linear(hidden_dim, n_classes)
-        # Added by Ze
-        self.hidden_dim = hidden_dim
-        self.sortpooling_k = sortpooling_k
-        self.sortpool = SortPooling(k=sortpooling_k)
-        self.conv1D = nn.Conv1d(in_channels=hidden_dim, out_channels=hidden_dim, kernel_size=3, stride=1)
-
-
-    def forward(self, g):
-        # Use node degree as the initial node feature. For undirected graphs, the in-degree
-        # is the same as the out_degree.
-        h = g.ndata['features'].float() #g.in_degrees().reshape(-1, 1).float()
-        #print(h.shape)
-
-        h = F.relu(self.conv1(g, h))
-        h = F.relu(self.conv2(g, h))
-
-        g.ndata['h'] = h
-
-        #########################################
-        h = self.sortpool(g, h)
-        current_batch_size = h.shape[0]
-        h = h.reshape(current_batch_size, self.hidden_dim, self.sortpooling_k)
-        h = F.relu(self.conv1D(h))
-
-        #########################################
-
-        # Calculate graph representation by averaging all the node representations.
-        hg = dgl.mean_nodes(g, 'h')
-        h = torch.squeeze(h)
-        return self.classify(h) # era hg antes
-
-
-class GATGraphClassifier(nn.Module):
-    def __init__(self, in_dim, hidden_dim, n_classes, sortpooling_k=3):
-        super(GATGraphClassifier, self).__init__()
-        self.conv1 = GATConv(in_dim, hidden_dim, heads)  # allow_zero_in_degree=True
-        self.conv2 = GATConv(hidden_dim * heads, hidden_dim, 1)
-        self.classify = nn.Linear(hidden_dim, n_classes)
-        self.hidden_dim = hidden_dim
-        self.sortpooling_k = sortpooling_k
-        self.sortpool = SortPooling(k=sortpooling_k)
-        self.conv1D = nn.Conv1d(in_channels=hidden_dim, out_channels=hidden_dim, kernel_size=3, stride=1)
-        self.avgpooling = AvgPooling()
-        self.drop = nn.Dropout(p = 0.3)
-
-
-    def forward(self, g):
-        # Use node degree as the initial node feature. For undirected graphs, the in-degree
-        # is the same as the out_degree.
-        h = g.ndata['features'].float()
-
-        bs = h.shape[0]
-        h = F.relu(self.conv1(g, h))
-        h = h.reshape(bs, -1)
-        h = F.relu(self.conv2(g, h))
-        h = h.reshape(bs, -1)
-        h = self.drop(h)
-        h = self.sortpool(g, h)
-
-        current_batch_size = h.shape[0]
-
-        h = h.reshape(current_batch_size, self.hidden_dim, self.sortpooling_k)
-        h = F.relu(self.conv1D(h))
-        h = torch.squeeze(h)
-
-        return self.classify(h)
-
-
-    def forward_amp(self, g):
-        # Use node degree as the initial node feature. For undirected graphs, the in-degree
-        # is the same as the out_degree.
-        h = g.ndata['features'].float()
-
-        print(h.shape)
-        bs = h.shape[0]
-        h = F.relu(self.conv1(g, h))
-        print("conv1:", h.shape)
-        h = h.reshape(bs, -1)
-        print("reshape:", h.shape)
-        h = F.relu(self.conv2(g, h))
-        print("conv2:", h.shape)
-        h = h.reshape(bs, -1)
-        print("reshape", h.shape)
-        #h = self.drop(h)
-        #print("after drop:", h.shape)
-        ##h = self.avgpooling(g, h)
-
-        if pooling_type == SORTPOOLING:
-            h = self.sortpool(g, h)
-            #print("after sortpool:", h.shape)
-
-            current_batch_size = h.shape[0]
-
-            h = h.reshape(current_batch_size, self.hidden_dim, self.sortpooling_k)
-            #h = h.reshape(current_batch_size, self.sortpooling_k, self.hidden_dim)
-            #print("after resize:", h.shape)
-
-            h = F.relu(self.conv1D(h))
-            #print("after Conv1d:", h.shape)
-
-            h = torch.squeeze(h)
-            #print("after squeeze:", h.shape)
-        elif pooling_type == ADAPTIVEMAXPOOLING:
-
-            h = torch.unsqueeze(h, 0)
-            amp = nn.AdaptiveMaxPool2d((5,7))
-            h = amp(h)
-
-        return self.classify(h)
-
 
 class GATGraphClassifier4HiddenLayers(nn.Module):
     def __init__(self, in_dim, hidden_dimensions, n_classes, sortpooling_k=3, conv2dChannel=3): # conv2dChannel era 64
@@ -295,8 +181,27 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
             amps.append(apGraphs.squeeze())
 
         amp_layer = torch.stack(tuple(amps))
-        #return classification, h_concat, amp_layer, amp_layer
-        return amp_layer
+
+        return amp_layer # shape: (batch_size, 30, sum(hidden_dimensions))
+    
+class DGCNNDecoder(nn.Module):
+    def __init__(self, encoded_shape, num_nodes, out_node_features):
+        super(DGCNNDecoder, self).__init__()
+
+        self.num_nodes = num_nodes
+        self.out_node_features = out_node_features
+        flattened_dim = encoded_shape[1] * encoded_shape[2]
+
+        self.decoder = nn.Sequential(
+            nn.Flatten(),  # (batch_size, 30, hidden_dim) → (batch_size, 30 * hidden_dim)
+            nn.Linear(flattened_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, num_nodes * out_node_features),  # Reconstruir todos os nodes
+        )
+
+    def forward(self, encoded):
+        decoded = self.decoder(encoded)
+        return decoded.view(-1, self.num_nodes, self.out_node_features)
 
 def apply_undersampling(df, strategy=0.5, method="random", n_clusters=None):
     """
@@ -382,9 +287,12 @@ if DEBUG:
 
     print(f"Ratio of True: {ratio_true * 100:.2f}%")
     print(f"Ratio of False: {ratio_false * 100:.2f}%")
-    #print number of samples
+    print("Number of samples in the dataset after undersampling:", len(df_resampled))
+    #print number of true and false labels
+    print("Number of true labels:", true_count)
+    print("Number of false labels:", false_count)
     
-print("Number of samples in the dataset after undersampling:", len(df_resampled))
+
 df = df_resampled
 
 # %%
@@ -491,40 +399,59 @@ def write_file(filename, rows):
             output_file.write(" ".join([str(a) for a in row.tolist()]) + '\n')
 
 
-def save_features(h_feats, label, dataset_type, sortpooling_k, epochs):
-    print("[save_features] h_feats.shape", h_feats.shape)
-    print("[save_features] label.shape", label.shape)
+def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction_dir, prefix, batch_size=10):
 
-    vuln_features = []
-    non_vuln_features = []
+    model.eval()
+    model_vgg.eval()
 
-    non_vuln_indexes = (label == 0).nonzero(as_tuple=True)
-    vuln_indexes = (label == 1).nonzero(as_tuple=True)
-    non_vuln = h_feats[non_vuln_indexes]
-    vuln = h_feats[vuln_indexes]
+    data_loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate)
 
-    write_file("non-vuln-features-{}-k{}-ep{}-{}".format(dataset_type, sortpooling_k, epochs, version), non_vuln)
-    write_file("vuln-features-{}-k{}-ep{}-{}".format(dataset_type, sortpooling_k, epochs, version), vuln)
+    all_dgcnn_embeddings = []
+    all_vgg_features = []
+    all_predictions = []
+    all_labels = []
 
+    for iter, (bg, label) in enumerate(data_loader):
+        h_cat_amp = model(bg).to(device)
+        all_dgcnn_embeddings.append(h_cat_amp.cpu().detach())
+
+        h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
+        prediction = model_vgg(h_cat_amp).detach()
+
+        label = torch.unsqueeze(label, 1).detach()
+
+        all_vgg_features.append(prediction.cpu())
+        all_predictions.extend(torch.argmax(prediction, dim=1).cpu())
+        all_labels.extend(label.cpu())
+
+    dgcnn_embeddings = torch.cat(all_dgcnn_embeddings, dim=0)
+    vgg_features = torch.cat(all_vgg_features, dim=0)
+    vgg_predictions = torch.tensor(all_predictions)
+    labels = torch.tensor(all_labels)
+
+    torch.save(dgcnn_embeddings, os.path.join(embedding_dir, f"dgcnn_embeddings_{prefix}.pt"))
+    torch.save(vgg_features, os.path.join(prediction_dir, f"vgg_features_{prefix}.pt"))
+    torch.save(vgg_predictions, os.path.join(prediction_dir, f"vgg_predictions_{prefix}.pt"))
+    torch.save(labels, os.path.join(embedding_dir, f"{prefix}_labels.pt"))
+    print(f"[save_embeddings] Saved {prefix} embeddings and predictions.")
 
 def adjust_to_vgg(samples):
-    padding_size = int((224 - samples.shape[3])/2)
-    if (samples.shape[3] % 2) != 0:
-        # odd number
-        padding_size_right = padding_size + 1
-    else:
-        padding_size_right = padding_size
+    if samples.ndim == 3:
+        samples = samples.unsqueeze(1)  # [B, 1, H, W]
 
-    padding_size_dim2 = int((224 - samples.shape[2])/2)
-    if (samples.shape[2] % 2) != 0:
-        # odd number
-        padding_size_right_dim2 = padding_size_dim2 + 1
-    else:
-        padding_size_right_dim2 = padding_size_dim2
+    if samples.shape[1] != 1:
+        # Já está com múltiplos canais (ex: [B, 32, H, W]), não aplicar pad
+        return samples
 
-    x1 = F.pad(samples, (padding_size, padding_size_right, padding_size_dim2, padding_size_right_dim2))
+    B, C, H, W = samples.shape
+    pad_H = 224 - H
+    pad_W = 224 - W
+    pad_top = pad_H // 2
+    pad_bottom = pad_H - pad_top
+    pad_left = pad_W // 2
+    pad_right = pad_W - pad_left
 
-    return x1
+    return F.pad(samples, (pad_left, pad_right, pad_top, pad_bottom))
 
 # 
 def focal_loss(pred, lbl, alpha=0.25, gamma=2.0):
@@ -533,30 +460,13 @@ def focal_loss(pred, lbl, alpha=0.25, gamma=2.0):
     # Compute focal loss with softmax probabilities
     return sigmoid_focal_loss(pred, one_hot_lbl, alpha=alpha, gamma=gamma, reduction="mean")
 
-class GCNEncoder(torch.nn.Module):
-  
-  def __init__(self, in_channels, hidden_size, out_channels, dropout):
-    super(GCNEncoder, self).__init__()
-    self.conv1 = GCNConv(in_channels, hidden_size)
-    self.conv2 = GCNConv(hidden_size, out_channels)
-    self.dropout = nn.Dropout(dropout)
-
-  # Our model will take the feature matrix X and the edge list
-  # representation of the graph as inputs.
-  def forward(self, x, edge_index):
-    x = self.conv1(x, edge_index).relu()
-    x = self.dropout(x)
-    return self.conv2(x, edge_index)
-
-
-
 for hidden_dimension in hidden_dimension_options:
     # %%
     # Create model
     if type(hidden_dimension) is list:
         model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling, conv2dChannel=conv2dChannelParam)
-    else:
-        model = GATGraphClassifier(num_features, hidden_dimension, 2)
+    #else:
+    #    model = GATGraphClassifier(num_features, hidden_dimension, 2)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     #model_vgg = VGGnet(in_channels=batch_size).to(device)
@@ -590,7 +500,7 @@ for hidden_dimension in hidden_dimension_options:
     def format_hidden_dim(hd):
         return '-'.join(map(str, hd)) if isinstance(hd, list) else str(hd)
 
-    artifact_suffix = f"{project}_{version}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD or 'none'}"
+    artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD or 'none'}"
     artifact_suffix += f"_w{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_model-{type(model).__name__}_k{k_sortpooling}"
     artifact_suffix += f"_vgg-drop{dropout_rate}_c2d{conv2dChannelParam}"
 
@@ -612,28 +522,32 @@ for hidden_dimension in hidden_dimension_options:
     for epoch in range(num_epochs):
         epoch_loss = 0
 
-        #all_dgcnn_embeddings = []
         all_predictions = []
-        #all_vgg_features = []
         all_labels = []
 
         for iter, (bg, label) in enumerate(data_loader):
             
-            label = label.to(device) # Move label to the same device as the model and prediction
+            label = label.to(device).long()
+            if label.ndim > 1:
+                label = label.view(-1)
 
-            #if DEBUG:
-            #    print("iter, epoch:", iter, epoch)
-            #bg = dgl.add_self_loop(bg)
             h_cat_amp = model(bg).to(device)
-            #all_dgcnn_embeddings.append(h_cat_amp.cpu().detach())
 
-            h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
+            if DEBUG:
+                print("[Train Phase] iter:", iter)
+                print("h_cat_amp.shape:", h_cat_amp.shape)
+                print("label.shape:", label.shape)
+                print("label unique values:", label.unique())        
+                print("h_cat_amp.shape before VGG:", h_cat_amp.shape)
+
+            #h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
             prediction = model_vgg(h_cat_amp)
-            #print(f"prediction.shape (after VGG): {prediction.shape}")
 
-            # VERIFICAR O HEATMAP DAS FEATURES
-                # valores médios das classes positivas e das classes negativas
-            # VEM A VGG
+            if torch.isnan(prediction).any():
+                print("❌ prediction tem NaN!")
+            if torch.isinf(prediction).any():
+                print("❌ prediction tem Inf!")
+            print("prediction stats:", prediction.min(), prediction.max(), prediction.mean())
 
             loss = loss_func(prediction, label)
 
@@ -645,20 +559,16 @@ for hidden_dimension in hidden_dimension_options:
             # Store predictions and labels
             all_predictions.extend(torch.argmax(prediction, dim=1).detach().cpu())
             all_labels.extend(label.cpu().numpy())
-            #all_vgg_features.append(prediction.cpu().detach())
 
-        # Aggregate batch results into single tensors
-        #epoch_dgcnn_embeddings = torch.cat(all_dgcnn_embeddings, dim=0)
-        #epoch_vgg_features = torch.cat(all_vgg_features, dim=0) # Full logits
-        #epoch_vgg_predictions = torch.stack(all_predictions) # Class labels (0/1)
+        if DEBUG:
+            print("prediction shape:", prediction.shape)
+            print("label shape:", label.shape)
+            print("label unique values:", label.unique())
+            print("loss value (pre):", loss_func(prediction, label))
+            if torch.isnan(loss):
+                print("❌ Loss is NaN!")
+
         epoch_labels = torch.tensor(all_labels)
-
-        # Save results for the epoch
-        #if epoch % 10 == 0:
-            #torch.save(epoch_dgcnn_embeddings, f"{embedding_dir}/dgcnn_embeddings_epoch{epoch}.pt")
-            #torch.save(epoch_vgg_features, f"{prediction_dir}/vgg_features_epoch{epoch}.pt")  # Save full VGG embeddings
-            #torch.save(epoch_vgg_predictions, f"{prediction_dir}/vgg_predictions_epoch{epoch}.pt")
-            #torch.save(epoch_labels, f"{embedding_dir}/train_labels_epoch{epoch}.pt")
 
         epoch_loss /= (iter + 1)
         all_predictions = torch.tensor(all_predictions)
@@ -693,12 +603,6 @@ for hidden_dimension in hidden_dimension_options:
     prediction_list = []
     test_Y_list = []
 
-    # Storage lists
-    all_dgcnn_embeddings_test = []
-    all_vgg_features_test = []
-    all_predictions_test = []
-    all_labels_test = []
-
     data_loader_test = DataLoader(testset, batch_size=batch_size, collate_fn=collate)
 
     print("========= Beginning of Test Phase ===========")
@@ -708,23 +612,15 @@ for hidden_dimension in hidden_dimension_options:
             print("[Test Phase] iter:", iter)
 
         h_cat_amp = model(test_bg).to(device)
-        all_dgcnn_embeddings_test.append(h_cat_amp.cpu().detach())
-
-        #h_cat_amp = model(test_bg).to(device)
 
         # Prepare for VGG and predict
         h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)#.detach()
         prediction_test = model_vgg(h_cat_amp).detach()
 
-        test_label = torch.unsqueeze(test_label, 1).detach()
+        test_label = test_label.long().squeeze().detach()
 
         prediction_list.append(prediction_test)
         test_Y_list.append(test_label)
-
-        # Store everything
-        all_vgg_features_test.append(prediction_test.cpu())
-        all_predictions_test.extend(torch.argmax(prediction_test, dim=1).cpu())
-        all_labels_test.extend(test_label.cpu())
 
 
         if iter % 10 == 0:
@@ -751,18 +647,6 @@ for hidden_dimension in hidden_dimension_options:
     print(f"prediction.shape: {prediction.shape}")
     print(f"test_Y.shape: {test_Y.shape}")
 
-    # Convert lists to tensors
-    dgcnn_embeddings_test = torch.cat(all_dgcnn_embeddings_test, dim=0)
-    vgg_features_test = torch.cat(all_vgg_features_test, dim=0)
-    vgg_predictions_test = torch.tensor(all_predictions_test)
-    test_labels = torch.tensor(all_labels_test)
-
-    # Save
-    torch.save(dgcnn_embeddings_test, f"{embedding_dir}/dgcnn_embeddings_test.pt")
-    torch.save(vgg_features_test, f"{prediction_dir}/vgg_features_test.pt")
-    torch.save(vgg_predictions_test, f"{prediction_dir}/vgg_predictions_test.pt")
-    torch.save(test_labels, f"{embedding_dir}/test_labels.pt")
-
     #TypeError: can't convert cuda:0 device type tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first.
 
     params = test_Y.squeeze().cpu().detach().numpy(), torch.argmax(prediction, dim = 1).float().cpu().detach().numpy()
@@ -776,13 +660,6 @@ for hidden_dimension in hidden_dimension_options:
     plt.savefig(os.path.join(stats_dir, f"confusion-matrix_epoch{epoch}.png"))
     plt.clf()
 
-    # Save Train Features
-    # 11/07 train_X, train_Y = map(list, zip(*trainset))
-    # 11/07 #train_bg = dgl.batch(train_X)
-    # 11/07 train_bg = train_X
-    # 11/07 train_Y = torch.tensor(train_Y).float()
-    # 11/07 #prediction, h_concat, h_feats,
-    # 11/07 h_cat_amp = model(train_bg)
-    # 11/07 #save_features(h_feats, train_Y, "train", k_sortpooling, num_epochs)
+    save_embeddings(model, model_vgg, testset, device, embedding_dir, prediction_dir, prefix="test", batch_size=batch_size)
 
 # %%
