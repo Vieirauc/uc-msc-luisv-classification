@@ -48,7 +48,7 @@ else:
 ZNORM = "znorm"
 MINMAX = "minmax"
 normalization = MINMAX #ZNORM
-DEBUG = True
+DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 UNDERSAMPLING_STRAT= 0.2
@@ -63,7 +63,7 @@ FREEZE_ENCODER = True
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 15 #2000 #500 # 1000
+num_epochs = 100 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 0 #90 #100 #80 #60 # 40
 CEL_weight = [1,1]
@@ -381,6 +381,9 @@ for i in range(1, len(testset)):
 
 feat_amin_train = torch.amin(all_feature_train_data, 0)
 feat_amax_train = torch.amax(all_feature_train_data, 0)
+print("feat_amin_train:", feat_amin_train)
+print("feat_amax_train:", feat_amax_train)
+
 feat_mean_train = torch.mean(all_feature_train_data, 0)
 feat_std_train = torch.std(all_feature_train_data, 0)
 
@@ -391,11 +394,11 @@ feat_std_test = torch.std(all_feature_test_data, 0)
 
 
 
-def normalize_minmax(dataset, feat_minimum, feat_maximum):
-    # as the minimum is always zero, the min-max normalization can be simplified with the division by the maximum value
-    for i in range(len(dataset)):
-        dataset[i, 0].ndata['features'] = torch.div(torch.sub(dataset[i, 0].ndata['features'], feat_minimum), torch.div(feat_maximum, feat_minimum))
-    return dataset
+#def normalize_minmax(dataset, feat_minimum, feat_maximum):
+#    # as the minimum is always zero, the min-max normalization can be simplified with the division by the maximum value
+#    for i in range(len(dataset)):
+#        dataset[i, 0].ndata['features'] = torch.div(torch.sub(dataset[i, 0].ndata['features'], feat_minimum), torch.div(feat_maximum, feat_minimum))
+#    return dataset
 
 
 
@@ -538,7 +541,7 @@ for hidden_dimension in hidden_dimension_options:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Create model
     
-    model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling, conv2dChannel=conv2dChannelParam)
+    model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling, conv2dChannel=conv2dChannelParam).to(device)
     model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
     if USE_AUTOENCODER:

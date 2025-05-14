@@ -56,7 +56,24 @@ def dataset_sampler(input_path, output_path, sample_size, ratio=0.2):
 
 def main():
     #remove_size_one("datasets/cfg-dataset-linux-v0.5.csv")
-    dataset_sampler("datasets/cfg-dataset-linux-v0.5.csv", "datasets/cfg-dataset-linux-sample1k.csv", 1000)
+    #dataset_sampler("datasets/cfg-dataset-linux-v0.5.csv", "datasets/cfg-dataset-linux-sample1k.csv", 1000)
+
+    # Simula a situação (features - min) / (max / min)
+    features = torch.tensor([5.0, 10.0, 0.0])
+    feat_min = torch.tensor([0.0, 0.0, 0.0])
+    feat_max = torch.tensor([10.0, 0.0, 0.0])  # A 2ª e 3ª colunas têm max == 0
+
+    # Cálculo "errado" da normalização original
+    denominator = feat_max / feat_min  # 10/0 = inf, 0/0 = nan
+    print("Denominator:", denominator)  # Deve mostrar: tensor([inf, nan, nan])
+
+    numerator = features - feat_min
+    print("Numerator:", numerator)
+
+    normalized = numerator / denominator
+    print("Normalized result:", normalized)
+
+
 
 if __name__ == "__main__":
     main()
