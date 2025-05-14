@@ -22,16 +22,31 @@ def dataset_sampler(input_path, output_path, sample_size, ratio=0.2):
     # Lê o CSV
     df = pd.read_csv(input_path, sep=';')
 
+    # Remover grafos com apenas um nó
+    #df = df[df['size'] > 1]
+
+    # Garantir tipos corretos
+    df['label'] = df['label'].astype(bool)
+
     # Calcula o número de amostras por classe
     n_true = int(sample_size * ratio)
     n_false = sample_size - n_true
 
     # Faz sample das classes separadamente
-    df_true = df[df['label'] == 1].sample(n=n_true, random_state=42)
-    df_false = df[df['label'] == 0].sample(n=n_false, random_state=42)
+    df_true = df[df['label'] == True].sample(n=n_true, random_state=42)
+    df_false = df[df['label'] == False].sample(n=n_false, random_state=42)
 
     # Junta e embaralha
     df_sampled = pd.concat([df_true, df_false]).sample(frac=1, random_state=42)
+
+    # Força label como bool explícito
+    df_sampled['label'] = df_sampled['label'].astype(bool)
+
+    for i, row in df_sampled.iterrows():
+        expected_len = row["size"] * 19  # 19 = número de features por nó
+        actual_len = len(eval(row["feature_matrix"]))
+        if actual_len != expected_len:
+            print(f"[‼️ Erro na linha {i}] size={row['size']}, expected_len={expected_len}, actual_len={actual_len}")
 
     # Escreve para novo ficheiro
     df_sampled.to_csv(output_path, sep=';', index=False)

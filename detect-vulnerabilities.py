@@ -55,10 +55,15 @@ UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
+USE_AUTOENCODER = True
+AUTOENCODER_EPOCHS = 20
+NUM_NODES = 128  # padding fixo
+FREEZE_ENCODER = True
+
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 10 #2000 #500 # 1000
+num_epochs = 15 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 0 #90 #100 #80 #60 # 40
 CEL_weight = [1,1]
@@ -96,7 +101,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 
         ###############################################################
 
-        self.classify = nn.Linear(hidden_dimensions[3], n_classes)
+        #self.classify = nn.Linear(hidden_dimensions[3], n_classes)
 
         # conv2dChannel 64, to be compatible with VGG11
         self.conv2dParam = nn.Conv2d(in_channels=1,
@@ -114,28 +119,9 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 
         for g in graphs:
             
-            # Katz centrality does not work (maybe related to eigen values and eigen vectors)
-            #nx_g = dgl.to_networkx(g)
-            #centrality = nx.degree_centrality(nx_g)
-            #print(nx.eigenvector_centrality(nx_g))
-
-            #print("degree_centrality", nx.degree_centrality(nx_g))
-            ##print("katz_centrality", nx.katz_centrality(nx_g))
-            #print("closeness_centrality", nx.closeness_centrality(nx_g))
-            #centrality = nx.closeness_centrality(nx_g)
-            #centrality = torch.FloatTensor(list(centrality.values()))
             h = g.ndata['features'].float()
-            #teste_mul = h.T.mul(centrality).T
-            #h = teste_mul
-
-            #teste_mul = torch.dot(h, centrality)
-            #print("torch.dot(h, centrality)", teste_mul.shape)
 
             bs = h.shape[0]  # bs is the number of nodes in the graph
-            #print("bs", bs)
-
-            #if DEBUG:
-            #    print(f"Graph with {bs} nodes and feature size {h.shape}")
 
             h1 = F.relu(self.conv1(g, h))
             #print("h1", h1.shape)
@@ -183,25 +169,82 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
         amp_layer = torch.stack(tuple(amps))
 
         return amp_layer # shape: (batch_size, 30, sum(hidden_dimensions))
-    
-class DGCNNDecoder(nn.Module):
-    def __init__(self, encoded_shape, num_nodes, out_node_features):
-        super(DGCNNDecoder, self).__init__()
 
+class GraphDecoder(nn.Module):
+    def __init__(self, embedding_dim, num_nodes, feature_dim):
+        super(GraphDecoder, self).__init__()
         self.num_nodes = num_nodes
-        self.out_node_features = out_node_features
-        flattened_dim = encoded_shape[1] * encoded_shape[2]
+        self.feature_dim = feature_dim
 
-        self.decoder = nn.Sequential(
-            nn.Flatten(),  # (batch_size, 30, hidden_dim) → (batch_size, 30 * hidden_dim)
-            nn.Linear(flattened_dim, 128),
+        self.reconstruct_features = nn.Sequential(
+            nn.Linear(embedding_dim, 256),
             nn.ReLU(),
-            nn.Linear(128, num_nodes * out_node_features),  # Reconstruir todos os nodes
+            nn.Linear(256, num_nodes * feature_dim),
+            nn.Sigmoid()  # ou nn.Identity() se os features já estiverem normalizados
         )
 
-    def forward(self, encoded):
-        decoded = self.decoder(encoded)
-        return decoded.view(-1, self.num_nodes, self.out_node_features)
+    def forward(self, z):
+        out = self.reconstruct_features(z)
+        return out.view(-1, self.num_nodes, self.feature_dim)
+
+def pad_graph(g, target_nodes, feature_dim):
+    if g.num_nodes() != g.ndata['features'].shape[0]:
+        raise ValueError(f"[pad_graph] Inconsistência: g.num_nodes() = {g.num_nodes()} "
+                         f"mas g.ndata['features'].shape[0] = {g.ndata['features'].shape[0]}")
+
+    if g.num_nodes() >= target_nodes:
+        # Truncar se for maior
+        g = dgl.node_subgraph(g, torch.arange(target_nodes))
+        g.ndata['features'] = g.ndata['features'][:target_nodes]
+        return g
+
+    # Padding com zeros
+    g.add_nodes(target_nodes - g.num_nodes())
+    padded_features = torch.zeros(target_nodes, feature_dim, device=g.device)
+    padded_features[:g.ndata['features'].shape[0]] = g.ndata['features']
+    g.ndata['features'] = padded_features
+
+    return g
+
+
+def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_dim, num_epochs=20):
+    encoder.train()
+    decoder.train()
+
+    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=0.001)
+    loss_func = nn.MSELoss()
+
+    for epoch in range(num_epochs):
+        total_loss = 0
+
+        for graphs, _ in data_loader:
+            padded_X = []
+            for g in graphs:
+                #print(f"[DEBUG] Antes do padding: g.num_nodes = {g.num_nodes()}, features = {g.ndata['features'].shape}")
+                g = pad_graph(g, num_nodes,feature_dim)  # garante que todos têm o mesmo número de nós
+                padded_X.append(g.ndata['features'])
+
+            X_orig = torch.stack(padded_X).to(device)
+            X_orig = X_orig.to(device)
+
+
+            graphs = [g.to(device) for g in graphs]  # move cada grafo individualmente
+            z = encoder(graphs)                      # output já estará no device   # (B, 30, D)
+            z = z.view(z.size(0), -1)        # (B, 30*D)
+
+            X_rec = decoder(z)               # (B, N, F)
+
+            loss = loss_func(X_rec, X_orig)
+
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+            total_loss += loss.item()
+
+        print(f"[Autoencoder] Epoch {epoch}, Loss: {total_loss:.4f}")
+
+
 
 def apply_undersampling(df, strategy=0.5, method="random", n_clusters=None):
     """
@@ -255,6 +298,7 @@ def apply_undersampling(df, strategy=0.5, method="random", n_clusters=None):
 # %%
 # Load and Process dataset
 # %%
+
 df['label'] = torch.tensor(df['label'].astype(np.int8))
 #print("sum(df[label]): ", sum(df['label']))
 df['sample_weight'] = torch.tensor(1 + (df['label'].astype(np.int8) * sample_weight_value))
@@ -276,6 +320,13 @@ false_count = len(df_resampled) - true_count  # Count of False labels (0)
 ratio_true = true_count / len(df_resampled)
 ratio_false = false_count / len(df_resampled)
 
+graph_sizes = df['size'].values
+max_size = np.max(graph_sizes)
+percentile_95 = int(np.percentile(graph_sizes, 95))
+
+print("Max size:", max_size)
+print("95th percentile:", percentile_95)
+
 if DEBUG:
     print("Original class distribution:")
     print(df['label'].value_counts(normalize=True))  # Check percentage distribution of True/False labels
@@ -289,6 +340,7 @@ if DEBUG:
     print(f"Ratio of False: {ratio_false * 100:.2f}%")
     print("Number of samples in the dataset after undersampling:", len(df_resampled))
     #print number of true and false labels
+    
     print("Number of true labels:", true_count)
     print("Number of false labels:", false_count)
     
@@ -338,12 +390,25 @@ feat_mean_test = torch.mean(all_feature_test_data, 0)
 feat_std_test = torch.std(all_feature_test_data, 0)
 
 
+
 def normalize_minmax(dataset, feat_minimum, feat_maximum):
     # as the minimum is always zero, the min-max normalization can be simplified with the division by the maximum value
     for i in range(len(dataset)):
         dataset[i, 0].ndata['features'] = torch.div(torch.sub(dataset[i, 0].ndata['features'], feat_minimum), torch.div(feat_maximum, feat_minimum))
     return dataset
 
+
+
+def normalize_minmax(dataset, feat_minimum, feat_maximum):
+    denominator = feat_maximum - feat_minimum
+    # Corrige casos onde max == min (sem variação)
+    denominator[denominator == 0] = 1.0
+    for i in range(len(dataset)):
+        dataset[i, 0].ndata['features'] = torch.div(
+            dataset[i, 0].ndata['features'] - feat_minimum,
+            denominator
+        )
+    return dataset
 
 def normalize_znorm(dataset, feat_mean, feat_std):
     for i in range(len(dataset)):
@@ -412,12 +477,16 @@ def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction
     all_labels = []
 
     for iter, (bg, label) in enumerate(data_loader):
-        h_cat_amp = model(bg).to(device)
+        bg = [g.to(device) for g in bg]
+        label = label.to(device)
+
+        h_cat_amp = model(bg)
         all_dgcnn_embeddings.append(h_cat_amp.cpu().detach())
 
         h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
         prediction = model_vgg(h_cat_amp).detach()
 
+        
         label = torch.unsqueeze(label, 1).detach()
 
         all_vgg_features.append(prediction.cpu())
@@ -436,22 +505,23 @@ def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction
     print(f"[save_embeddings] Saved {prefix} embeddings and predictions.")
 
 def adjust_to_vgg(samples):
-    if samples.ndim == 3:
-        samples = samples.unsqueeze(1)  # [B, 1, H, W]
+    padding_size = int((224 - samples.shape[3])/2)
+    if (samples.shape[3] % 2) != 0:
+        # odd number
+        padding_size_right = padding_size + 1
+    else:
+        padding_size_right = padding_size
 
-    if samples.shape[1] != 1:
-        # Já está com múltiplos canais (ex: [B, 32, H, W]), não aplicar pad
-        return samples
+    padding_size_dim2 = int((224 - samples.shape[2])/2)
+    if (samples.shape[2] % 2) != 0:
+        # odd number
+        padding_size_right_dim2 = padding_size_dim2 + 1
+    else:
+        padding_size_right_dim2 = padding_size_dim2
 
-    B, C, H, W = samples.shape
-    pad_H = 224 - H
-    pad_W = 224 - W
-    pad_top = pad_H // 2
-    pad_bottom = pad_H - pad_top
-    pad_left = pad_W // 2
-    pad_right = pad_W - pad_left
+    x1 = F.pad(samples, (padding_size, padding_size_right, padding_size_dim2, padding_size_right_dim2))
 
-    return F.pad(samples, (pad_left, pad_right, pad_top, pad_bottom))
+    return x1
 
 # 
 def focal_loss(pred, lbl, alpha=0.25, gamma=2.0):
@@ -460,19 +530,39 @@ def focal_loss(pred, lbl, alpha=0.25, gamma=2.0):
     # Compute focal loss with softmax probabilities
     return sigmoid_focal_loss(pred, one_hot_lbl, alpha=alpha, gamma=gamma, reduction="mean")
 
+
+
+
 for hidden_dimension in hidden_dimension_options:
     # %%
-    # Create model
-    if type(hidden_dimension) is list:
-        model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling, conv2dChannel=conv2dChannelParam)
-    #else:
-    #    model = GATGraphClassifier(num_features, hidden_dimension, 2)
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    #model_vgg = VGGnet(in_channels=batch_size).to(device)
+    # Create model
+    
+    model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling, conv2dChannel=conv2dChannelParam)
     model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
-    #Class weighting
+    if USE_AUTOENCODER:
+        encoder = model.to(device)
+        decoder = GraphDecoder(embedding_dim=30 * sum(hidden_dimension) * conv2dChannelParam , num_nodes=NUM_NODES, feature_dim=num_features).to(device)
+
+        print(f"[INFO] Starting autoencoder pretraining for {AUTOENCODER_EPOCHS} epochs...")
+        train_autoencoder(encoder, decoder, data_loader, device, num_nodes=NUM_NODES, feature_dim=num_features, num_epochs=AUTOENCODER_EPOCHS)
+        print(f"[INFO] Autoencoder training completed.\n")
+    
+    if FREEZE_ENCODER: # TRUE para usar as embeddings aprendidas, sem as alterar, e apenas treinar a VGG para aprender a classificar
+        for param in model.parameters():
+            param.requires_grad = False
+    
+    # optimizer apenas para model_vgg se FREEZE_ENCODER == True
+    optimizer = optim.Adam(
+        list(filter(lambda p: p.requires_grad, model.parameters())) +
+        list(model_vgg.parameters()), lr=0.001
+    )
+
+    #print("[DEBUG] Parâmetros que vão ser atualizados:")
+    #for name, param in list(model.named_parameters()) + list(model_vgg.named_parameters()):
+    #    if param.requires_grad:
+    #        print(f"  {name} - requires_grad = True")
 
     #loss_func = lambda pred, lbl: focal_loss(pred, lbl, alpha=0.25, gamma=2)
     if CEL_weight == 0:
@@ -480,8 +570,8 @@ for hidden_dimension in hidden_dimension_options:
 
     weight = torch.tensor(CEL_weight , dtype=torch.float, device=device)
     loss_func = nn.CrossEntropyLoss(weight=weight)
-    #loss_func = nn.CrossEntropyLoss() # nn.NLLLoss() #nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    # optimizer = optim.Adam(model.parameters(), lr=0.001)
     # optimizer = optim.Adam(model.parameters(), lr=0.01, weight_decay=0.001)
 
     # %%
@@ -527,27 +617,13 @@ for hidden_dimension in hidden_dimension_options:
 
         for iter, (bg, label) in enumerate(data_loader):
             
-            label = label.to(device).long()
-            if label.ndim > 1:
-                label = label.view(-1)
+            bg = [g.to(device) for g in bg]
+            label = label.to(device)
 
-            h_cat_amp = model(bg).to(device)
+            h_cat_amp = model(bg)      
 
-            if DEBUG:
-                print("[Train Phase] iter:", iter)
-                print("h_cat_amp.shape:", h_cat_amp.shape)
-                print("label.shape:", label.shape)
-                print("label unique values:", label.unique())        
-                print("h_cat_amp.shape before VGG:", h_cat_amp.shape)
-
-            #h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
+            h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
             prediction = model_vgg(h_cat_amp)
-
-            if torch.isnan(prediction).any():
-                print("❌ prediction tem NaN!")
-            if torch.isinf(prediction).any():
-                print("❌ prediction tem Inf!")
-            print("prediction stats:", prediction.min(), prediction.max(), prediction.mean())
 
             loss = loss_func(prediction, label)
 
@@ -560,13 +636,6 @@ for hidden_dimension in hidden_dimension_options:
             all_predictions.extend(torch.argmax(prediction, dim=1).detach().cpu())
             all_labels.extend(label.cpu().numpy())
 
-        if DEBUG:
-            print("prediction shape:", prediction.shape)
-            print("label shape:", label.shape)
-            print("label unique values:", label.unique())
-            print("loss value (pre):", loss_func(prediction, label))
-            if torch.isnan(loss):
-                print("❌ Loss is NaN!")
 
         epoch_labels = torch.tensor(all_labels)
 
@@ -591,8 +660,7 @@ for hidden_dimension in hidden_dimension_options:
     df_stats.set_index('epoch', inplace=True)
     df_stats['epoch_accuracy'] = df_stats['epoch_accuracy'].astype(np.float64)
     sns.lineplot(data=df_stats)
-    os.makedirs('stats', exist_ok=True)
-    plt.savefig(os.path.join(stats_dir, f"train-results_epoch{epoch}.png"))
+    plt.savefig(os.path.join(stats_dir, f"train-results_epoch{num_epochs}.png"))
 
     # %%
     #Evaluate Model!
@@ -608,8 +676,7 @@ for hidden_dimension in hidden_dimension_options:
     print("========= Beginning of Test Phase ===========")
     for iter, (test_bg, test_label) in enumerate(data_loader_test):
 
-        if DEBUG:
-            print("[Test Phase] iter:", iter)
+        test_bg = [g.to(device) for g in test_bg]
 
         h_cat_amp = model(test_bg).to(device)
 
@@ -653,11 +720,11 @@ for hidden_dimension in hidden_dimension_options:
 
     report = classification_report(*params, output_dict=True)
     df = pd.DataFrame(report).transpose()
-    df.to_csv(os.path.join(stats_dir, f"classification_report_epoch{epoch}.csv"))
+    df.to_csv(os.path.join(stats_dir, f"classification_report.csv"))
     cm = confusion_matrix(*params, labels=[0,1])
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0,1])
     disp.plot()
-    plt.savefig(os.path.join(stats_dir, f"confusion-matrix_epoch{epoch}.png"))
+    plt.savefig(os.path.join(stats_dir, f"confusion-matrix.png"))
     plt.clf()
 
     save_embeddings(model, model_vgg, testset, device, embedding_dir, prediction_dir, prefix="test", batch_size=batch_size)
