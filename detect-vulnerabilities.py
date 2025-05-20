@@ -51,9 +51,9 @@ normalization = MINMAX #ZNORM
 DEBUG = False
 SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
+pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
-pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 USE_AUTOENCODER = True
 AUTOENCODER_EPOCHS = 20
@@ -63,7 +63,7 @@ FREEZE_ENCODER = True
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 100 #2000 #500 # 1000
+num_epochs = 5 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 0 #90 #100 #80 #60 # 40
 CEL_weight = [1,1]
@@ -593,9 +593,9 @@ for hidden_dimension in hidden_dimension_options:
     def format_hidden_dim(hd):
         return '-'.join(map(str, hd)) if isinstance(hd, list) else str(hd)
 
-    artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_us-{UNDERSAMPLING_STRAT}{UNDERSAMPLING_METHOD or 'none'}"
-    artifact_suffix += f"_w{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_model-{type(model).__name__}_k{k_sortpooling}"
-    artifact_suffix += f"_vgg-drop{dropout_rate}_c2d{conv2dChannelParam}"
+    artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_"+(f"us-{UNDERSAMPLING_METHOD}-{UNDERSAMPLING_STRAT}" if UNDERSAMPLING_METHOD else "us-0")
+    artifact_suffix += f"_w-{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_model-{type(model).__name__}_k-{k_sortpooling}"
+    artifact_suffix += f"_vgg-drop-{dropout_rate}_c2d-{conv2dChannelParam}_"+(f"autoenc-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-freeze-{FREEZE_ENCODER}" if USE_AUTOENCODER else "no-autoenc")
 
     if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
         artifact_suffix += f"_heads{heads}"
