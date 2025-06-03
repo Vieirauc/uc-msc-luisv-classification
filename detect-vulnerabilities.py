@@ -56,7 +56,7 @@ UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 
 USE_AUTOENCODER = True
-AUTOENCODER_EPOCHS = 20
+AUTOENCODER_EPOCHS = 10
 NUM_NODES = 128  # padding fixo
 FREEZE_ENCODER = True
 
@@ -207,15 +207,19 @@ def pad_graph(g, target_nodes, feature_dim):
     return g
 
 
-def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_dim, num_epochs=20):
+def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_dim, num_epochs=20, stats_dir="stats"):
     encoder.train()
     decoder.train()
 
     opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=0.001)
-    loss_func = nn.MSELoss()
+    #loss_func = nn.MSELoss()
+    loss_func = nn.BCELoss()
+
+    epoch_losses = []
 
     for epoch in range(num_epochs):
         total_loss = 0
+        num_batches = 0
 
         for graphs, _ in data_loader:
             padded_X = []
@@ -241,8 +245,31 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
             opt.step()
 
             total_loss += loss.item()
+            num_batches += 1
 
-        print(f"[Autoencoder] Epoch {epoch}, Loss: {total_loss:.4f}")
+        avg_loss = total_loss / num_batches
+        epoch_losses.append(avg_loss)
+
+        print(f"[Autoencoder] Epoch {epoch}, Loss: {avg_loss:.4f}")
+
+    # Plot and save loss curve
+    plt.figure()
+    plt.plot(range(num_epochs), epoch_losses, marker='o', color='b')
+    plt.xlabel("Epoch")
+    plt.ylabel("Reconstruction Loss (BCE)")
+    plt.title("Autoencoder Training Loss Curve")
+    plt.grid(True)
+
+    # Save in the stats_dir
+    loss_plot_path = os.path.join(stats_dir, "autoencoder_loss_curve.png")
+    plt.savefig(loss_plot_path)
+    plt.close()
+    print(f"[Autoencoder] Loss plot saved to {loss_plot_path}")
+
+    # Save as CSV for future use
+    loss_df = pd.DataFrame({"epoch": list(range(num_epochs)), "loss": epoch_losses})
+    loss_df.to_csv(os.path.join(stats_dir, "autoencoder_loss.csv"), index=False)
+    print(f"[Autoencoder] Loss history saved to {os.path.join(stats_dir, 'autoencoder_loss.csv')}")
 
 
 
@@ -533,7 +560,8 @@ def focal_loss(pred, lbl, alpha=0.25, gamma=2.0):
     # Compute focal loss with softmax probabilities
     return sigmoid_focal_loss(pred, one_hot_lbl, alpha=alpha, gamma=gamma, reduction="mean")
 
-
+def format_hidden_dim(hd):
+        return '-'.join(map(str, hd)) if isinstance(hd, list) else str(hd)
 
 
 for hidden_dimension in hidden_dimension_options:
@@ -544,12 +572,32 @@ for hidden_dimension in hidden_dimension_options:
     model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling, conv2dChannel=conv2dChannelParam).to(device)
     model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
+    # Create directories to store results
+    artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_"+(f"us-{UNDERSAMPLING_METHOD}-{UNDERSAMPLING_STRAT}" if UNDERSAMPLING_METHOD else "us-0")
+    artifact_suffix += f"_w-{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_model-{type(model).__name__}_k-{k_sortpooling}"
+    if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
+        artifact_suffix += f"_heads{heads}"
+    artifact_suffix += f"_vgg-drop-{dropout_rate}_c2d-{conv2dChannelParam}_"+(f"autoenc-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-freeze-{FREEZE_ENCODER}" if USE_AUTOENCODER else "no-autoenc")
+
+    
+
+    output_base_dir = "output/runs"
+    run_output_dir = os.path.join(output_base_dir, artifact_suffix)
+    embedding_dir = os.path.join(run_output_dir, "embeddings")
+    prediction_dir = os.path.join(run_output_dir, "predictions")
+    stats_dir = os.path.join(run_output_dir, "stats")
+
+    os.makedirs(embedding_dir, exist_ok=True)
+    os.makedirs(prediction_dir, exist_ok=True)
+    os.makedirs(stats_dir, exist_ok=True)
+
+
     if USE_AUTOENCODER:
         encoder = model.to(device)
         decoder = GraphDecoder(embedding_dim=30 * sum(hidden_dimension) * conv2dChannelParam , num_nodes=NUM_NODES, feature_dim=num_features).to(device)
 
         print(f"[INFO] Starting autoencoder pretraining for {AUTOENCODER_EPOCHS} epochs...")
-        train_autoencoder(encoder, decoder, data_loader, device, num_nodes=NUM_NODES, feature_dim=num_features, num_epochs=AUTOENCODER_EPOCHS)
+        train_autoencoder(encoder, decoder, data_loader, device, num_nodes=NUM_NODES, feature_dim=num_features, num_epochs=AUTOENCODER_EPOCHS, stats_dir=stats_dir)
         print(f"[INFO] Autoencoder training completed.\n")
     
     if FREEZE_ENCODER: # TRUE para usar as embeddings aprendidas, sem as alterar, e apenas treinar a VGG para aprender a classificar
@@ -589,26 +637,7 @@ for hidden_dimension in hidden_dimension_options:
     vuln_features = []
     non_vuln_features = []
 
-    # Create directories to store results
-    def format_hidden_dim(hd):
-        return '-'.join(map(str, hd)) if isinstance(hd, list) else str(hd)
 
-    artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_"+(f"us-{UNDERSAMPLING_METHOD}-{UNDERSAMPLING_STRAT}" if UNDERSAMPLING_METHOD else "us-0")
-    artifact_suffix += f"_w-{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_model-{type(model).__name__}_k-{k_sortpooling}"
-    artifact_suffix += f"_vgg-drop-{dropout_rate}_c2d-{conv2dChannelParam}_"+(f"autoenc-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-freeze-{FREEZE_ENCODER}" if USE_AUTOENCODER else "no-autoenc")
-
-    if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
-        artifact_suffix += f"_heads{heads}"
-
-    output_base_dir = "output/runs"
-    run_output_dir = os.path.join(output_base_dir, artifact_suffix)
-    embedding_dir = os.path.join(run_output_dir, "embeddings")
-    prediction_dir = os.path.join(run_output_dir, "predictions")
-    stats_dir = os.path.join(run_output_dir, "stats")
-
-    os.makedirs(embedding_dir, exist_ok=True)
-    os.makedirs(prediction_dir, exist_ok=True)
-    os.makedirs(stats_dir, exist_ok=True)
 
     print("========= Beginning of Training Phase ===========")
 

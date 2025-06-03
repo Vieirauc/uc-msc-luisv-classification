@@ -36,11 +36,11 @@ def load_dataset(path):
     df['adjacency_matrix'] = df[['adjacency_matrix', 'size']].apply(convert_to_adjancency, axis=1)
     df['feature_matrix'] = df['feature_matrix'].apply(convert_to_np_array)
     df['graphs'] = df.apply(create_dgl_graphs, axis=1)
-    print("Initial DataFrame before dropping NaNs:")
-    print(df.head())
+    #print("Initial DataFrame before dropping NaNs:")
+    #print(df.head())
     df.dropna(inplace=True)
-    print("DataFrame after dropping NaNs:")
-    print(df.head())  # Check if the DataFrame now excludes rows with NaNs
+    #print("DataFrame after dropping NaNs:")
+    #print(df.head())  # Check if the DataFrame now excludes rows with NaNs
     df.reset_index(drop=True, inplace=True)
    
     return df
