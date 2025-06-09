@@ -572,12 +572,21 @@ for hidden_dimension in hidden_dimension_options:
     model = GATGraphClassifier4HiddenLayers(num_features, hidden_dimension, 2, sortpooling_k=k_sortpooling, conv2dChannel=conv2dChannelParam).to(device)
     model_vgg = VGGnet(in_channels=conv2dChannelParam).to(device)
 
-    # Create directories to store results
-    artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_"+(f"us-{UNDERSAMPLING_METHOD}-{UNDERSAMPLING_STRAT}" if UNDERSAMPLING_METHOD else "us-0")
-    artifact_suffix += f"_w-{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_model-{type(model).__name__}_k-{k_sortpooling}"
-    if type(model).__name__ in ["GATGraphClassifier", "GATGraphClassifier4HiddenLayers"]:
-        artifact_suffix += f"_heads{heads}"
-    artifact_suffix += f"_vgg-drop-{dropout_rate}_c2d-{conv2dChannelParam}_"+(f"autoenc-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-freeze-{FREEZE_ENCODER}" if USE_AUTOENCODER else "no-autoenc")
+    model_name = type(model).__name__
+    if model_name == "GATGraphClassifier":
+        model_name = "GAT"
+    elif model_name == "GATGraphClassifier4HiddenLayers":
+        model_name = "GAT4"
+
+    artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_"
+    artifact_suffix += f"us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}_w-{CEL_weight[0]}-{CEL_weight[1]}_"
+    artifact_suffix += f"sw{sample_weight_value}_m-{model_name}_k-{k_sortpooling}"
+
+    if model_name in ["GAT", "GAT4"]:
+        artifact_suffix += f"_h{heads}"
+
+    artifact_suffix += f"_vd-{dropout_rate}_c2d-{conv2dChannelParam}_"
+    artifact_suffix += f"ae-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-fz-{FREEZE_ENCODER}" if USE_AUTOENCODER else "noae"
 
     
 
