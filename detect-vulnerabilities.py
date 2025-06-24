@@ -34,7 +34,7 @@ graph_type = 'cfg' #
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
 
 #dataset_name = "{}-dataset-{}-{}".format(graph_type, project, version)
-dataset_name = 'cfg-dataset-linux-sample1k'
+dataset_name = 'cfg-dataset-linux-sampleBALANCED'
 dataset_path = 'datasets/'
 
 if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
@@ -56,21 +56,21 @@ UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 
 USE_AUTOENCODER = True
-AUTOENCODER_EPOCHS = 10
 NUM_NODES = 128  # padding fixo
 FREEZE_ENCODER = True
+AUTOENCODER_EPOCHS = 1
 
 
 heads = 4 # 2
 num_features = 11 + 8 # 8 features related to memory management
-num_epochs = 5 #2000 #500 # 1000
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 0 #90 #100 #80 #60 # 40
 CEL_weight = [1,1]
 batch_size = 10
 k_sortpooling = 6 #24 #16
-dropout_rate = 0.1
+dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
+num_epochs = 1 #2000 #500 # 1000
 
 
 
@@ -585,7 +585,7 @@ for hidden_dimension in hidden_dimension_options:
     if model_name in ["GAT", "GAT4"]:
         artifact_suffix += f"_h{heads}"
 
-    artifact_suffix += f"_vd-{dropout_rate}_c2d-{conv2dChannelParam}_"
+    artifact_suffix += f"_dr-{dropout_rate}_c2d-{conv2dChannelParam}_"
     artifact_suffix += f"ae-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-fz-{FREEZE_ENCODER}" if USE_AUTOENCODER else "noae"
 
     
@@ -616,7 +616,7 @@ for hidden_dimension in hidden_dimension_options:
     # optimizer apenas para model_vgg se FREEZE_ENCODER == True
     optimizer = optim.Adam(
         list(filter(lambda p: p.requires_grad, model.parameters())) +
-        list(model_vgg.parameters()), lr=0.001
+        list(model_vgg.parameters()), lr=0.0005
     )
 
     #print("[DEBUG] Parâmetros que vão ser atualizados:")
@@ -768,6 +768,6 @@ for hidden_dimension in hidden_dimension_options:
     plt.savefig(os.path.join(stats_dir, f"confusion-matrix.png"))
     plt.clf()
 
-    save_embeddings(model, model_vgg, testset, device, embedding_dir, prediction_dir, prefix="test", batch_size=batch_size)
+    #save_embeddings(model, model_vgg, testset, device, embedding_dir, prediction_dir, prefix="test", batch_size=batch_size)
 
 # %%

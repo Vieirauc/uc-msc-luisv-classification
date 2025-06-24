@@ -56,7 +56,7 @@ def dataset_sampler(input_path, output_path, sample_size, ratio=0.2):
 
 def main():
     #remove_size_one("datasets/cfg-dataset-linux-v0.5.csv")
-    dataset_sampler("datasets/cfg-dataset-linux-v0.5.csv", "datasets/cfg-dataset-linux-sample10kbalanced.csv", 10000, ratio=0.5)
+    dataset_sampler("datasets/cfg-dataset-linux-v0.5_filtered.csv", "datasets/cfg-dataset-linux-sampleBALANCED.csv", 4320, ratio=0.5)
 
     # Simula a situação (features - min) / (max / min)
     #features = torch.tensor([5.0, 10.0, 0.0])
