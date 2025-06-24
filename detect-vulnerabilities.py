@@ -6,6 +6,7 @@ from load_datasets import load_dataset
 import sys
 import dgl
 import torch
+import json
 from torch.utils.data import DataLoader, WeightedRandomSampler
 import torch.optim as optim
 from dgl.nn import SortPooling
@@ -536,6 +537,35 @@ def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction
     torch.save(labels, os.path.join(embedding_dir, f"{prefix}_labels.pt"))
     print(f"[save_embeddings] Saved {prefix} embeddings and predictions.")
 
+
+def log_hyperparameters(run_output_dir, params_dict):
+    """
+    Salva os hiperparâmetros usados na run em CSV, JSON e LaTeX
+    dentro de um subdiretório `hyperparameters/`.
+    """
+    hyper_dir = os.path.join(run_output_dir, "hyperparameters")
+    os.makedirs(hyper_dir, exist_ok=True)
+    
+    # CSV
+    csv_path = os.path.join(hyper_dir, "hyperparameters.csv")
+    pd.DataFrame([params_dict]).to_csv(csv_path, index=False)
+    print(f"[INFO] Hiperparâmetros salvos em {csv_path}")
+
+    # JSON
+    json_path = os.path.join(hyper_dir, "hyperparameters.json")
+    with open(json_path, "w") as f_json:
+        json.dump(params_dict, f_json, indent=4)
+
+    # LaTeX
+    latex_path = os.path.join(hyper_dir, "hyperparameters_table.tex")
+    with open(latex_path, "w") as f_latex:
+        f_latex.write("\\begin{table}[H]\n\\centering\n\\begin{tabular}{ll}\n")
+        f_latex.write("\\hline\n\\textbf{Hiperparâmetro} & \\textbf{Valor} \\\\\n\\hline\n")
+        for key, value in params_dict.items():
+            f_latex.write(f"{key} & {value} \\\\\n")
+        f_latex.write("\\hline\n\\end{tabular}\n\\caption{Hiperparâmetros da execução}\n\\end{table}\n")
+
+
 def adjust_to_vgg(samples):
     padding_size = int((224 - samples.shape[3])/2)
     if (samples.shape[3] % 2) != 0:
@@ -580,6 +610,25 @@ for hidden_dimension in hidden_dimension_options:
     elif model_name == "GATGraphClassifier4HiddenLayers":
         model_name = "GAT4"
 
+    params_dict = {
+    "dataset_name": dataset_name,
+    "hidden_dimensions": hidden_dimension,
+    "normalization": normalization,
+    "num_epochs": num_epochs,
+    "undersampling_method": UNDERSAMPLING_METHOD or "None",
+    "undersampling_ratio": UNDERSAMPLING_STRAT,
+    "CEL_weight": CEL_weight,
+    "sample_weight_value": sample_weight_value,
+    "model": model_name,
+    "k_sortpooling": k_sortpooling,
+    "heads": heads if model_name in ["GAT", "GAT4"] else "N/A",
+    "dropout_rate": dropout_rate,
+    "conv2dChannelParam": conv2dChannelParam,
+    "USE_AUTOENCODER": USE_AUTOENCODER,
+    "AUTOENCODER_EPOCHS": AUTOENCODER_EPOCHS,
+    "FREEZE_ENCODER": FREEZE_ENCODER
+    }
+
     artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_"
     artifact_suffix += f"us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}_w-{CEL_weight[0]}-{CEL_weight[1]}_"
     artifact_suffix += f"sw{sample_weight_value}_m-{model_name}_k-{k_sortpooling}"
@@ -590,7 +639,6 @@ for hidden_dimension in hidden_dimension_options:
     artifact_suffix += f"_dr-{dropout_rate}_c2d-{conv2dChannelParam}_"
     artifact_suffix += f"ae-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-fz-{FREEZE_ENCODER}" if USE_AUTOENCODER else "noae"
 
-    
 
     output_base_dir = "output/runs"
     run_output_dir = os.path.join(output_base_dir, artifact_suffix)
@@ -771,5 +819,6 @@ for hidden_dimension in hidden_dimension_options:
     plt.clf()
 
     #save_embeddings(model, model_vgg, testset, device, embedding_dir, prediction_dir, prefix="test", batch_size=batch_size)
+    log_hyperparameters(run_output_dir, params_dict)
 
 # %%
