@@ -58,6 +58,7 @@ UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 USE_AUTOENCODER = True
 NUM_NODES = 128  # padding fixo
 FREEZE_ENCODER = True
+learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 1
 
 
@@ -70,6 +71,7 @@ batch_size = 10
 k_sortpooling = 6 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
+learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 #0.001 #0.01 #0.1 #0.0005
 num_epochs = 1 #2000 #500 # 1000
 
 
@@ -211,7 +213,7 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
     encoder.train()
     decoder.train()
 
-    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=0.001)
+    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr_ae=learning_rate_ae)
     #loss_func = nn.MSELoss()
     loss_func = nn.BCELoss()
 
@@ -616,7 +618,7 @@ for hidden_dimension in hidden_dimension_options:
     # optimizer apenas para model_vgg se FREEZE_ENCODER == True
     optimizer = optim.Adam(
         list(filter(lambda p: p.requires_grad, model.parameters())) +
-        list(model_vgg.parameters()), lr=0.0005
+        list(model_vgg.parameters()), lr=learning_rate
     )
 
     #print("[DEBUG] Parâmetros que vão ser atualizados:")
