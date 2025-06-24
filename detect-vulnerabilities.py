@@ -213,7 +213,7 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
     encoder.train()
     decoder.train()
 
-    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr_ae=learning_rate_ae)
+    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=learning_rate_ae)
     #loss_func = nn.MSELoss()
     loss_func = nn.BCELoss()
 
