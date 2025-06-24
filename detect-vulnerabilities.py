@@ -658,10 +658,12 @@ for hidden_dimension in hidden_dimension_options:
         print(f"[INFO] Starting autoencoder pretraining for {AUTOENCODER_EPOCHS} epochs...")
         train_autoencoder(encoder, decoder, data_loader, device, num_nodes=NUM_NODES, feature_dim=num_features, num_epochs=AUTOENCODER_EPOCHS, stats_dir=stats_dir)
         print(f"[INFO] Autoencoder training completed.\n")
+
+        if FREEZE_ENCODER: # TRUE para usar as embeddings aprendidas, sem as alterar, e apenas treinar a VGG para aprender a classificar
+            for param in model.parameters():
+                param.requires_grad = False
     
-    if FREEZE_ENCODER: # TRUE para usar as embeddings aprendidas, sem as alterar, e apenas treinar a VGG para aprender a classificar
-        for param in model.parameters():
-            param.requires_grad = False
+    
     
     # optimizer apenas para model_vgg se FREEZE_ENCODER == True
     optimizer = optim.Adam(
