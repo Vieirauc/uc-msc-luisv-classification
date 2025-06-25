@@ -35,7 +35,7 @@ graph_type = 'cfg' #
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
 
 #dataset_name = "{}-dataset-{}-{}".format(graph_type, project, version)
-dataset_name = 'cfg-dataset-linux-sampleBALANCED'
+dataset_name = 'cfg-dataset-linux-sample1k'
 dataset_path = 'datasets/'
 
 if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
@@ -56,9 +56,9 @@ pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 
-USE_AUTOENCODER = True
+USE_AUTOENCODER = False
 NUM_NODES = 128  # padding fixo
-FREEZE_ENCODER = True
+FREEZE_ENCODER = False
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 1
 
@@ -73,7 +73,7 @@ k_sortpooling = 6 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 #0.001 #0.01 #0.1 #0.0005
-num_epochs = 1 #2000 #500 # 1000
+num_epochs = 2 #2000 #500 # 1000
 
 
 
@@ -502,7 +502,7 @@ def write_file(filename, rows):
             output_file.write(" ".join([str(a) for a in row.tolist()]) + '\n')
 
 
-def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction_dir, prefix, batch_size=10):
+def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction_dir, prefix, batch_size=10, epoch=None):
 
     model.eval()
     model_vgg.eval()
@@ -536,11 +536,12 @@ def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction
     vgg_predictions = torch.tensor(all_predictions)
     labels = torch.tensor(all_labels)
 
-    torch.save(dgcnn_embeddings, os.path.join(embedding_dir, f"dgcnn_embeddings_{prefix}.pt"))
-    torch.save(vgg_features, os.path.join(prediction_dir, f"vgg_features_{prefix}.pt"))
-    torch.save(vgg_predictions, os.path.join(prediction_dir, f"vgg_predictions_{prefix}.pt"))
-    torch.save(labels, os.path.join(embedding_dir, f"{prefix}_labels.pt"))
-    print(f"[save_embeddings] Saved {prefix} embeddings and predictions.")
+    suffix = f"{prefix}" + (f"_epoch{epoch}" if epoch is not None else "")
+    torch.save(dgcnn_embeddings, os.path.join(embedding_dir, f"dgcnn_embeddings_{suffix}.pt"))
+    torch.save(vgg_features, os.path.join(prediction_dir, f"vgg_features_{suffix}.pt"))
+    torch.save(vgg_predictions, os.path.join(prediction_dir, f"vgg_predictions_{suffix}.pt"))
+    torch.save(labels, os.path.join(embedding_dir, f"{suffix}_labels.pt"))
+    print(f"[save_embeddings] Saved {suffix} embeddings and predictions.")
 
 
 def log_hyperparameters(run_output_dir, params_dict):
@@ -746,6 +747,19 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
+        # Save embeddings after first epoch for PCA comparison
+        if epoch == 0:
+            print("[DEBUG] Saving embeddings after epoch 0 for PCA analysis...")
+            save_embeddings(
+                model, model_vgg, testset,
+                device,
+                embedding_dir, prediction_dir,
+                prefix="test",  # you can change this to "early" or "initial" if preferred
+                batch_size=batch_size,
+                epoch=0
+            )
+
+
     print("========= End of Training Phase ===========")
 
     stats_dict = {
@@ -825,7 +839,7 @@ for hidden_dimension in hidden_dimension_options:
     plt.savefig(os.path.join(stats_dir, f"confusion-matrix.png"))
     plt.clf()
 
-    #save_embeddings(model, model_vgg, testset, device, embedding_dir, prediction_dir, prefix="test", batch_size=batch_size)
+    save_embeddings(model, model_vgg, testset, device, embedding_dir, prediction_dir, prefix="test", batch_size=batch_size, epoch=num_epochs)
     log_hyperparameters(run_output_dir, params_dict)
 
 # %%

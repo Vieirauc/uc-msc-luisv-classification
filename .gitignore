@@ -8,3 +8,4 @@ __pycache__/
 output/
 git-filter-repo
 stats/
+analyze_embeddings_old.py
