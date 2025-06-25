@@ -354,8 +354,13 @@ graph_sizes = df['size'].values
 max_size = np.max(graph_sizes)
 percentile_95 = int(np.percentile(graph_sizes, 95))
 
-print("Max size:", max_size)
-print("95th percentile:", percentile_95)
+#print("Max size:", max_size)
+#print("95th percentile:", percentile_95)
+
+if UNDERSAMPLING_METHOD != None:
+    print("Number of samples in the dataset after undersampling:", len(df_resampled))
+    print("Number of true labels:", true_count)
+    print("Number of false labels:", false_count)
 
 if DEBUG:
     print("Original class distribution:")
