@@ -10,7 +10,7 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 import re
 
 # === CONFIGURATION ===
-run_dir = "output/runs/cfg-dataset-linux-sample1k_hd-32-32-32-32_norm-minmax_e2_us-0-0.2_w-1-1_sw0_m-GAT4_k-6_h4_dr-0.3_c2d-32_noae"
+run_dir = "C:/Users/luka3/Desktop/UC/MSI/Tese/code/pamela_runs/docker_outputs/runs/cfg-dataset-linux-v0.5_filtered_hd-32-32-32-32_norm-minmax_e10_us-random-0.2_w-1-4_sw0_m-GAT4_k-6_h4_dr-0.3_c2d-32_ae-True-aep-10-fz-True_test2_embeddings"
 embedding_dir = os.path.join(run_dir, "embeddings")
 prediction_dir = os.path.join(run_dir, "predictions")
 output_dir = os.path.join(run_dir, "embedding_analysis")

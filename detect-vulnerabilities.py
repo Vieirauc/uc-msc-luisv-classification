@@ -28,13 +28,17 @@ from detect_vulnerabilities_vgg import VGGnet
 # %%
 
 project = 'linux' # 'gecko-dev'#'linux'
-version = 'v0.5_filtered'
-graph_type = 'cfg' #
+version = None # 'v0.5_filtered'
+graph_type = 'pdg' #
 
 #cfg-dataset-linux-v0.5 has 101513 entries
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
 
-#dataset_name = "{}-dataset-{}-{}".format(graph_type, project, version)
+#if version:
+#    dataset_name = f"{graph_type}-dataset-{project}-{version}"
+#else:
+#    dataset_name = f"{graph_type}-dataset-{project}"
+
 dataset_name = 'cfg-dataset-linux-sample1k'
 dataset_path = 'datasets/'
 
@@ -56,25 +60,32 @@ pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 
-USE_AUTOENCODER = False
+USE_AUTOENCODER = True
 NUM_NODES = 128  # padding fixo
-FREEZE_ENCODER = False
+FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
-AUTOENCODER_EPOCHS = 1
+AUTOENCODER_EPOCHS = 10
 
 
 heads = 4 # 2
-num_features = 11 + 8 # 8 features related to memory management
 hidden_dimension_options = [[32, 32, 32, 32]] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
 sample_weight_value = 0 #90 #100 #80 #60 # 40
-CEL_weight = [1,1]
+CEL_weight = [1,4]
 batch_size = 10
 k_sortpooling = 6 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 #0.001 #0.01 #0.1 #0.0005
-num_epochs = 2 #2000 #500 # 1000
+num_epochs = 10 #2000 #500 # 1000
 
+if graph_type == 'cfg':
+    num_features = 19  # 11 base + 8 memory
+elif graph_type == 'ast':
+    num_features = 6
+elif graph_type == 'pdg':
+    num_features = 4
+else:
+    raise ValueError(f"Unsupported graph_type: {graph_type}")
 
 
 ##################################################################################
@@ -340,7 +351,12 @@ def collate(samples):
     #return batched_graph, torch.tensor(labels)
     return graphs, torch.tensor(labels)
 
+true_count = df['label'].sum()  # Count of True labels (1)
+false_count = len(df) - true_count  # Count of False labels (0)
+
 print("Number of samples in the dataset before undersampling:", len(df))
+print("Number of true labels:", true_count)
+print("Number of false labels:", false_count)
 # Applying undersampling
 df_resampled = apply_undersampling(df, strategy=UNDERSAMPLING_STRAT, method=UNDERSAMPLING_METHOD)
 
@@ -409,6 +425,12 @@ all_feature_test_data = testset[0,0].ndata['features']
 print("train & test data shape:",all_feature_train_data.shape, all_feature_test_data.shape)
 
 for i in range(1, len(trainset)):
+    #########
+    current_feat = trainset[i, 0].ndata['features']
+    if current_feat.shape[1] != all_feature_train_data.shape[1]:
+        print(f"[ERROR] Mismatch at index {i}: Expected {all_feature_train_data.shape[1]} features but got {current_feat.shape[1]}")
+        continue  # or raise error if you want to crash here
+    #########
     all_feature_train_data = torch.cat((all_feature_train_data, trainset[i, 0].ndata['features']), dim=0)
 
 for i in range(1, len(testset)):
@@ -466,14 +488,13 @@ if normalization == MINMAX:
 ###########################################################
 
 def adjust_dataset(dataset):
-    # Removes the column where all the features are zero
+    if graph_type != 'cfg':
+        return dataset  # No adjustment needed for AST/PDG
+
     for i in range(len(dataset)):
         t = dataset[i, 0].ndata['features']
-        if num_features > 11:
-            # memory management features are also available
-            t = torch.cat((t[:,0:3], t[:,4:15], t[:,16:18]), 1)
-        else:
-            t = torch.cat((t[:,0:3], t[:,4:]), 1)
+        # Remove pre-identified zero columns in CFG
+        t = torch.cat((t[:, 0:3], t[:, 4:15], t[:, 16:18]), 1) if num_features > 11 else torch.cat((t[:, 0:3], t[:, 4:]), 1)
         dataset[i, 0].ndata['features'] = t
     return dataset
 
@@ -482,11 +503,12 @@ def adjust_dataset(dataset):
 if normalization is not None or normalization == "":
     trainset = adjust_dataset(trainset)
     testset = adjust_dataset(testset)
-    if num_features > 11:
-        # memory management features are also available
-        num_features -= 3
-    else:
-        num_features -= 1
+    if graph_type == 'cfg':
+        if num_features > 11:
+            # memory management features are also available
+            num_features -= 3
+        else:
+            num_features -= 1
 print("len(trainset):", len(trainset))
 
 ###########################################################
@@ -661,9 +683,29 @@ for hidden_dimension in hidden_dimension_options:
         encoder = model.to(device)
         decoder = GraphDecoder(embedding_dim=30 * sum(hidden_dimension) * conv2dChannelParam , num_nodes=NUM_NODES, feature_dim=num_features).to(device)
 
+                # Save embeddings BEFORE autoencoder training
+        save_embeddings(
+            model, model_vgg, testset,
+            device,
+            embedding_dir, prediction_dir,
+            prefix="test_before_autoencoder",
+            batch_size=batch_size,
+            epoch=0
+        )
+
         print(f"[INFO] Starting autoencoder pretraining for {AUTOENCODER_EPOCHS} epochs...")
         train_autoencoder(encoder, decoder, data_loader, device, num_nodes=NUM_NODES, feature_dim=num_features, num_epochs=AUTOENCODER_EPOCHS, stats_dir=stats_dir)
         print(f"[INFO] Autoencoder training completed.\n")
+
+            # Save embeddings AFTER autoencoder training
+        save_embeddings(
+            model, model_vgg, testset,
+            device,
+            embedding_dir, prediction_dir,
+            prefix="test_after_autoencoder",
+            batch_size=batch_size,
+            epoch=AUTOENCODER_EPOCHS
+        )
 
         if FREEZE_ENCODER: # TRUE para usar as embeddings aprendidas, sem as alterar, e apenas treinar a VGG para aprender a classificar
             for param in model.parameters():
@@ -694,6 +736,18 @@ for hidden_dimension in hidden_dimension_options:
 
     # %%
     # Train the Model
+
+    if not USE_AUTOENCODER:
+        print("[INFO] Saving embeddings on trainset before training (no autoencoder)...")
+        save_embeddings(
+            model, model_vgg, trainset,
+            device,
+            embedding_dir, prediction_dir,
+            prefix="train_before_training",
+            batch_size=batch_size,
+            epoch=0
+        )
+    
     model.train()
     stats_dict = {
         'epoch': [],
@@ -759,6 +813,16 @@ for hidden_dimension in hidden_dimension_options:
                 epoch=0
             )
 
+    if not USE_AUTOENCODER:
+        print("[INFO] Saving embeddings on trainset after training (no autoencoder)...")
+        save_embeddings(
+            model, model_vgg, trainset,
+            device,
+            embedding_dir, prediction_dir,
+            prefix="train_after_training",
+            batch_size=batch_size,
+            epoch=num_epochs
+        )
 
     print("========= End of Training Phase ===========")
 
@@ -839,7 +903,6 @@ for hidden_dimension in hidden_dimension_options:
     plt.savefig(os.path.join(stats_dir, f"confusion-matrix.png"))
     plt.clf()
 
-    save_embeddings(model, model_vgg, testset, device, embedding_dir, prediction_dir, prefix="test", batch_size=batch_size, epoch=num_epochs)
     log_hyperparameters(run_output_dir, params_dict)
 
 # %%
