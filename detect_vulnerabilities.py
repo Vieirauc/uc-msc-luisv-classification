@@ -29,7 +29,7 @@ from detect_vulnerabilities_vgg import VGGnet
 
 project = 'linux' # 'gecko-dev'#'linux'
 version = None # 'v0.5_filtered'
-graph_type = 'pdg' #
+graph_type = 'cfg' #
 
 #cfg-dataset-linux-v0.5 has 101513 entries
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
@@ -182,7 +182,7 @@ class GATGraphClassifier4HiddenLayers(nn.Module):
 
         amp_layer = torch.stack(tuple(amps))
 
-        return amp_layer # shape: (batch_size, 30, sum(hidden_dimensions))
+        return amp_layer # shape: (batch_size, 32 ,30, sum(hidden_dimensions))
 
 class GraphDecoder(nn.Module):
     def __init__(self, embedding_dim, num_nodes, feature_dim):
@@ -524,7 +524,8 @@ def write_file(filename, rows):
             output_file.write(" ".join([str(a) for a in row.tolist()]) + '\n')
 
 
-def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction_dir, prefix, batch_size=10, epoch=None):
+def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction_dir,
+                    prefix, batch_size=10, epoch=None, save_vgg_predictions=True):
 
     model.eval()
     model_vgg.eval()
@@ -532,8 +533,7 @@ def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction
     data_loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate)
 
     all_dgcnn_embeddings = []
-    all_vgg_features = []
-    all_predictions = []
+    all_vgg_predictions = []
     all_labels = []
 
     for iter, (bg, label) in enumerate(data_loader):
@@ -543,28 +543,26 @@ def save_embeddings(model, model_vgg, dataset, device, embedding_dir, prediction
         h_cat_amp = model(bg)
         all_dgcnn_embeddings.append(h_cat_amp.cpu().detach())
 
-        h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
-        prediction = model_vgg(h_cat_amp).detach()
+        if save_vgg_predictions:
+            h_cat_amp = adjust_to_vgg(h_cat_amp).to(device)
+            prediction = model_vgg(h_cat_amp).detach()
+            all_vgg_predictions.extend(torch.argmax(prediction, dim=1).cpu())
 
-        
-        label = torch.unsqueeze(label, 1).detach()
-
-        all_vgg_features.append(prediction.cpu())
-        all_predictions.extend(torch.argmax(prediction, dim=1).cpu())
         all_labels.extend(label.cpu())
 
     dgcnn_embeddings = torch.cat(all_dgcnn_embeddings, dim=0)
-    vgg_features = torch.cat(all_vgg_features, dim=0)
-    vgg_predictions = torch.tensor(all_predictions)
     labels = torch.tensor(all_labels)
 
     suffix = f"{prefix}" + (f"_epoch{epoch}" if epoch is not None else "")
     torch.save(dgcnn_embeddings, os.path.join(embedding_dir, f"dgcnn_embeddings_{suffix}.pt"))
-    torch.save(vgg_features, os.path.join(prediction_dir, f"vgg_features_{suffix}.pt"))
-    torch.save(vgg_predictions, os.path.join(prediction_dir, f"vgg_predictions_{suffix}.pt"))
     torch.save(labels, os.path.join(embedding_dir, f"{suffix}_labels.pt"))
-    print(f"[save_embeddings] Saved {suffix} embeddings and predictions.")
 
+    if save_vgg_predictions:
+        vgg_predictions = torch.tensor(all_vgg_predictions)
+        torch.save(vgg_predictions, os.path.join(prediction_dir, f"vgg_predictions_{suffix}.pt"))
+
+    print(f"[save_embeddings] Saved {suffix} embeddings and labels{' and VGG predictions' if save_vgg_predictions else ''}.")
+    print(f"[save_embeddings] Embeddings shape: {dgcnn_embeddings.shape}")
 
 def log_hyperparameters(run_output_dir, params_dict):
     """
@@ -690,7 +688,8 @@ for hidden_dimension in hidden_dimension_options:
             embedding_dir, prediction_dir,
             prefix="test_before_autoencoder",
             batch_size=batch_size,
-            epoch=0
+            epoch=0,
+            save_vgg_predictions=False
         )
 
         print(f"[INFO] Starting autoencoder pretraining for {AUTOENCODER_EPOCHS} epochs...")
@@ -704,7 +703,8 @@ for hidden_dimension in hidden_dimension_options:
             embedding_dir, prediction_dir,
             prefix="test_after_autoencoder",
             batch_size=batch_size,
-            epoch=AUTOENCODER_EPOCHS
+            epoch=AUTOENCODER_EPOCHS,
+            save_vgg_predictions=False
         )
 
         if FREEZE_ENCODER: # TRUE para usar as embeddings aprendidas, sem as alterar, e apenas treinar a VGG para aprender a classificar
@@ -801,20 +801,8 @@ for hidden_dimension in hidden_dimension_options:
         stats_dict['epoch_losses'].append(epoch_loss)
         stats_dict['epoch_accuracy'].append(accuracy)
 
-        # Save embeddings after first epoch for PCA comparison
-        if epoch == 0:
-            print("[DEBUG] Saving embeddings after epoch 0 for PCA analysis...")
-            save_embeddings(
-                model, model_vgg, testset,
-                device,
-                embedding_dir, prediction_dir,
-                prefix="test",  # you can change this to "early" or "initial" if preferred
-                batch_size=batch_size,
-                epoch=0
-            )
-
     if not USE_AUTOENCODER:
-        print("[INFO] Saving embeddings on trainset after training (no autoencoder)...")
+        print("[INFO] Saving embeddings on trainset after DGCNN and VGG  training (no autoencoder)...")
         save_embeddings(
             model, model_vgg, trainset,
             device,
@@ -823,6 +811,19 @@ for hidden_dimension in hidden_dimension_options:
             batch_size=batch_size,
             epoch=num_epochs
         )
+    
+    if USE_AUTOENCODER:
+        print("[INFO] Saving embeddings on testset after VGG training (with autoencoder)...")
+        save_embeddings(
+            model, model_vgg, testset,
+            device,
+            embedding_dir, prediction_dir,
+            prefix="test_after_vgg",
+            batch_size=batch_size,
+            epoch=num_epochs
+        )
+
+
 
     print("========= End of Training Phase ===========")
 
