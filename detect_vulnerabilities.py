@@ -115,7 +115,9 @@ class DGCNNEncoder(nn.Module):
         self.sortpool = SortPooling(k=sortpooling_k)
         self.dropout = nn.Dropout(p=dropout_rate)
 
-    def forward(self, graphs, return_node_embeddings=False):
+        self.amp_pool = nn.AdaptiveMaxPool1d(sortpooling_k)
+
+    def forward(self, graphs, return_node_embeddings=False, use_amp_pooling=False):
         batch_node_features = []
 
         for g in graphs:
@@ -131,16 +133,24 @@ class DGCNNEncoder(nn.Module):
         h_all = torch.cat(batch_node_features, dim=0)
 
         if return_node_embeddings:
-            # Used for autoencoder — return raw node embeddings
             return h_all, batched_graph
+
+        if use_amp_pooling:
+            batch_sizes = batched_graph.batch_num_nodes()
+            split_feats = torch.split(h_all, batch_sizes.tolist())
+            
+            # Aplica AMP pooling para garantir dimensões fixas
+            amp_pooled = torch.stack([self.amp_pool(feat.T).flatten() for feat in split_feats], dim=0)
+            embeddings = self.dropout(amp_pooled)
+            return embeddings  # (B, k * hidden_dim[-1])
 
         if self.use_sortpool:
             h_pooled = self.sortpool(batched_graph, h_all)
             embeddings = self.dropout(h_pooled)
-            return embeddings  # (B, k * hidden_dim[-1])
-        else:
-            batched_graph.ndata['h'] = h_all
-            return batched_graph
+            return embeddings
+
+        batched_graph.ndata['h'] = h_all
+        return batched_graph
 
 
 class DGCNNVGGAdapter(nn.Module):
@@ -241,7 +251,7 @@ def pad_graph(g, target_nodes, feature_dim):
     return g
 
 
-def train_autoencoder(encoder, decoder, data_loader, device, sortpooling_k, feature_dim, num_epochs=20, stats_dir="stats"):
+def train_autoencoder(encoder, decoder, data_loader, device, sortpooling_k, feature_dim, num_epochs=20, stats_dir="stats", use_amp_pooling=False):
     encoder.train()
     decoder.train()
 
@@ -257,8 +267,8 @@ def train_autoencoder(encoder, decoder, data_loader, device, sortpooling_k, feat
         for graphs, _ in data_loader:
             graphs = [g.to(device) for g in graphs]
 
-            # Forward pass — usamos SortPooling (output: (B, k * D))
-            z = encoder(graphs)  # encoder.forward → retorna embeddings já com pooling (B, k * D)
+            # Usa AMP ou SortPooling dependendo do classifier
+            z = encoder(graphs, use_amp_pooling=use_amp_pooling)
 
             # Criar ground truth com os k primeiros nós reais de cada grafo (sem padding!)
             X_orig_list = []
@@ -267,7 +277,6 @@ def train_autoencoder(encoder, decoder, data_loader, device, sortpooling_k, feat
                 if node_feats.size(0) >= sortpooling_k:
                     selected = node_feats[:sortpooling_k]
                 else:
-                    # Pad com zeros se o grafo tiver menos de k nós
                     pad = torch.zeros(sortpooling_k - node_feats.size(0), feature_dim, device=node_feats.device)
                     selected = torch.cat([node_feats, pad], dim=0)
                 X_orig_list.append(selected)
@@ -613,7 +622,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Initialize modules explicitly (modular setup)
 if classifier_type == "vgg":
-    encoder = DGCNNEncoder(num_features, hidden_dimension, use_sortpool=False).to(device)
+    encoder = DGCNNEncoder(num_features, hidden_dimension, sortpooling_k=k_sortpooling, use_sortpool=False).to(device)
 else:
     encoder = DGCNNEncoder(num_features, hidden_dimension, sortpooling_k=k_sortpooling, use_sortpool=True).to(device)
 
@@ -688,7 +697,8 @@ if USE_AUTOENCODER:
         sortpooling_k=k_sortpooling,
         feature_dim=num_features,
         num_epochs=AUTOENCODER_EPOCHS,
-        stats_dir=stats_dir
+        stats_dir=stats_dir,
+        use_amp_pooling=(classifier_type == "vgg") # ← define aqui claramente
     )
     print("[INFO] Autoencoder training completed.\n")
 
@@ -814,7 +824,7 @@ with torch.no_grad():
         all_labels.extend(labels)
 
 # Metrics & Confusion Matrix
-classification_df = pd.DataFrame(classification_report(all_labels, all_preds, output_dict=True)).transpose()
+classification_df = pd.DataFrame(classification_report(all_labels, all_preds, output_dict=True, zero_division=0)).transpose()
 classification_df.to_csv(os.path.join(stats_dir, "classification_report.csv"))
 
 cm = confusion_matrix(all_labels, all_preds)
@@ -828,7 +838,7 @@ print(cm)
 
 # Optional: Also print the full classification report
 print("\n[CLASSIFICATION REPORT]")
-print(classification_report(all_labels, all_preds, digits=4))
+print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
 
 # Log hyperparameters
 log_hyperparameters(run_output_dir, params_dict)
