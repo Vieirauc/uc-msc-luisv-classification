@@ -40,7 +40,8 @@ graph_type = 'cfg' #
 #else:
 #    dataset_name = f"{graph_type}-dataset-{project}"
 
-dataset_name = 'cfg-dataset-linux-v0.5_filtered'  # 
+#dataset_name = 'cfg-dataset-linux-v0.5_filtered'
+dataset_name = 'cfg-dataset-linux-sample1k'
 dataset_path = 'datasets/'
 
 if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
@@ -180,24 +181,25 @@ class DGCNNVGGAdapter(nn.Module):
 class DGCNNConv1DClassifier(nn.Module):
     def __init__(self, input_dim, num_classes=2):
         super(DGCNNConv1DClassifier, self).__init__()
+
+        # Compute L2
+        L2 = input_dim - 4 - 4  # kernel_size=5 twice, stride=1
+
         self.conv1 = nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5)
         self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5)
-        self.global_maxpool = nn.AdaptiveMaxPool1d(1)  # Reduz a dimensão para (batch_size, 32, 1)
 
         self.fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(32, 64),
+            nn.Flatten(),  # (B, 32, L2) → (B, 32*L2)
+            nn.Linear(32 * L2, 64),
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(64, num_classes)
         )
 
     def forward(self, x):
-        # Esperado input: (batch_size, embedding_dim)
-        x = x.unsqueeze(1)  # (B, 1, D)
-        x = F.relu(self.conv1(x))  # (B, 16, L)
-        x = F.relu(self.conv2(x))  # (B, 32, L)
-        x = self.global_maxpool(x)  # (B, 32, 1)
+        x = x.unsqueeze(1)         # (B, 1, D)
+        x = F.relu(self.conv1(x))  # (B, 16, L1)
+        x = F.relu(self.conv2(x))  # (B, 32, L2)
         return self.fc(x)
 
 
