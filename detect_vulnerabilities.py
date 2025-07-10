@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 import os
+import time
 from load_datasets import load_dataset
 import sys
 import dgl
@@ -39,7 +40,7 @@ graph_type = 'cfg' #
 #else:
 #    dataset_name = f"{graph_type}-dataset-{project}"
 
-dataset_name = 'cfg-dataset-linux-sample1k'
+dataset_name = 'cfg-dataset-linux-v0.5_filtered'  # 
 dataset_path = 'datasets/'
 
 if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
@@ -58,10 +59,10 @@ SORTPOOLING = "sort_pooling"
 ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 
 normalization = MINMAX #ZNORM
-pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
+#pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 UNDERSAMPLING_STRAT= 0.2
-UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
+UNDERSAMPLING_METHOD = "random" # "random" "kmeans" #None
 
 USE_AUTOENCODER = True
 NUM_NODES = 55  # padding fixo
@@ -81,7 +82,7 @@ k_sortpooling = 16 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 #0.001 #0.01 #0.1 #0.0005
-num_epochs = 50 #2000 #500 # 1000
+num_epochs = 20 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
@@ -94,10 +95,11 @@ else:
 
 
 ##################################################################################
-
 class DGCNNEncoder(nn.Module):
-    def __init__(self, in_dim, hidden_dimensions, sortpooling_k):
+    def __init__(self, in_dim, hidden_dimensions, sortpooling_k=None, use_sortpool=True):
         super(DGCNNEncoder, self).__init__()
+
+        self.use_sortpool = use_sortpool
 
         self.conv1 = GraphConv(in_dim, hidden_dimensions[0], allow_zero_in_degree=True)
         self.conv2 = GraphConv(hidden_dimensions[0], hidden_dimensions[1], allow_zero_in_degree=True)
@@ -109,12 +111,12 @@ class DGCNNEncoder(nn.Module):
         #self.conv3 = GATConv(hidden_dimensions[1] * heads, hidden_dimensions[2], heads)
         #self.conv4 = GATConv(hidden_dimensions[2] * heads, hidden_dimensions[3], 1)
 
-        self.sortpool = SortPooling(k=k_sortpooling)
+        self.sortpool = SortPooling(k=sortpooling_k)
         self.dropout = nn.Dropout(p=dropout_rate)
 
-    def forward(self, graphs):
+    def forward(self, graphs, return_node_embeddings=False):
         batch_node_features = []
-        
+
         for g in graphs:
             g = dgl.add_self_loop(g)
             h = g.ndata['features'].float()
@@ -126,11 +128,18 @@ class DGCNNEncoder(nn.Module):
 
         batched_graph = dgl.batch(graphs)
         h_all = torch.cat(batch_node_features, dim=0)
-        
-        h_pooled = self.sortpool(batched_graph, h_all)
-        embeddings = self.dropout(h_pooled)
 
-        return embeddings  # shape: (batch_size, sortpooling_k * hidden_dim[-1])
+        if return_node_embeddings:
+            # Used for autoencoder — return raw node embeddings
+            return h_all, batched_graph
+
+        if self.use_sortpool:
+            h_pooled = self.sortpool(batched_graph, h_all)
+            embeddings = self.dropout(h_pooled)
+            return embeddings  # (B, k * hidden_dim[-1])
+        else:
+            batched_graph.ndata['h'] = h_all
+            return batched_graph
 
 
 class DGCNNVGGAdapter(nn.Module):
@@ -143,11 +152,30 @@ class DGCNNVGGAdapter(nn.Module):
         )
         self.amp = nn.AdaptiveMaxPool2d((30, embedding_dim))
 
-    def forward(self, graph_embeddings):
-        x = graph_embeddings.unsqueeze(1).unsqueeze(1)  # (B, 1, 1, embedding_dim)
-        x = self.conv2d(x)  # (B, channels, H, W)
-        x = self.amp(x)  # (B, channels, 30, embedding_dim)
-        return x
+    def forward(self, batched_graph):
+        """
+        Expects a batched graph where each graph has node features stored in 'h'.
+        This version reproduces the AMP pathway: conv2d over a pseudo-image of node x embedding.
+        """
+        graph_feats = []
+        batch_num_nodes = batched_graph.batch_num_nodes().tolist()
+
+        # Get node features
+        h_all = batched_graph.ndata['h']  # (total_nodes, hidden_dim)
+        start = 0
+
+        for num_nodes in batch_num_nodes:
+            end = start + num_nodes
+            h_graph = h_all[start:end]  # (num_nodes, hidden_dim)
+
+            h_graph = h_graph.unsqueeze(0).unsqueeze(0)  # (1, 1, N, F)
+            conv_out = self.conv2d(h_graph)              # (1, C, H, W)
+            amp_out = self.amp(conv_out).squeeze(0)      # (C, 30, F)
+            graph_feats.append(amp_out)
+
+            start = end
+
+        return torch.stack(graph_feats)  # (B, C, 30, F)
 
 class DGCNNConv1DClassifier(nn.Module):
     def __init__(self, input_dim, num_classes=2):
@@ -215,8 +243,7 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
     decoder.train()
 
     opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=learning_rate_ae)
-    #loss_func = nn.MSELoss()  # recommended for reconstruction tasks
-    loss_func = nn.BCELoss() 
+    loss_func = nn.BCELoss()
 
     epoch_losses = []
 
@@ -225,20 +252,21 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
         num_batches = 0
 
         for graphs, _ in data_loader:
-            padded_X = []
-            for g in graphs:
-                g = pad_graph(g, num_nodes, feature_dim)
-                padded_X.append(g.ndata['features'])
-
+            # Padding dos grafos
+            padded_X = [pad_graph(g, num_nodes, feature_dim).ndata['features'] for g in graphs]
             X_orig = torch.stack(padded_X).to(device)
-
             graphs = [g.to(device) for g in graphs]
 
-            # no reshape here!
-            z = encoder(graphs)  # directly (batch_size, embedding_dim)
+            # Recupera embeddings de nós antes do pooling
+            h_all, batched_graph = encoder(graphs, return_node_embeddings=True)
+            batched_graph.ndata['h'] = h_all
 
-            X_rec = decoder(z)  # (batch_size, num_nodes, feature_dim)
+            batch_sizes = batched_graph.batch_num_nodes()
+            split_feats = torch.split(h_all, batch_sizes.tolist())
+            z = torch.stack([feat.mean(dim=0) for feat in split_feats], dim=0)  # (B, D)
 
+            # Reconstrução dos features
+            X_rec = decoder(z)
             loss = loss_func(X_rec, X_orig)
 
             opt.zero_grad()
@@ -250,25 +278,27 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
 
         avg_loss = total_loss / num_batches
         epoch_losses.append(avg_loss)
-
         print(f"[Autoencoder] Epoch {epoch}, Loss: {avg_loss:.4f}")
 
-    # Plot and save loss curve
+    # Plot e CSV
     plt.figure()
     plt.plot(range(num_epochs), epoch_losses, marker='o', color='b')
     plt.xlabel("Epoch")
-    plt.ylabel("Reconstruction Loss (MSE)")
+    plt.ylabel("Reconstruction Loss (BCE)")
     plt.title("Autoencoder Training Loss Curve")
     plt.grid(True)
 
+    os.makedirs(stats_dir, exist_ok=True)
     loss_plot_path = os.path.join(stats_dir, "autoencoder_loss_curve.png")
     plt.savefig(loss_plot_path)
     plt.close()
     print(f"[Autoencoder] Loss plot saved to {loss_plot_path}")
 
     loss_df = pd.DataFrame({"epoch": list(range(num_epochs)), "loss": epoch_losses})
-    loss_df.to_csv(os.path.join(stats_dir, "autoencoder_loss.csv"), index=False)
-    print(f"[Autoencoder] Loss history saved to {os.path.join(stats_dir, 'autoencoder_loss.csv')}")
+    csv_path = os.path.join(stats_dir, "autoencoder_loss.csv")
+    loss_df.to_csv(csv_path, index=False)
+    print(f"[Autoencoder] Loss history saved to {csv_path}")
+
 
 def apply_undersampling(df, strategy=0.5, method="random", n_clusters=None):
     if method is None:
@@ -308,65 +338,90 @@ def write_file(filename, rows):
         for row in rows:
             output_file.write(" ".join([str(a) for a in row.tolist()]) + '\n')
 
-def save_embeddings(encoder, dataset, device, embedding_dir, prefix, batch_size=10, 
-                    epoch=None, vgg_adapter=None, vgg_model=None):
+def save_embeddings(encoder, dataset, device, embedding_dir, prefix, epoch=None,
+                    batch_size=10, classifier_type=None, vgg_adapter=None, classifier_model=None):
     """
-    Saves embeddings from the encoder. Optionally saves VGG predictions if adapter and model are provided.
+    Salva embeddings da DGCNN + previsões do classificador (se houver) + labels.
+    Suporta: vgg, conv1d, ou apenas extração de embeddings.
+
+    Args:
+        encoder: modelo DGCNNEncoder
+        dataset: dataset de teste ou validação
+        device: cuda ou cpu
+        embedding_dir: diretório de saída
+        prefix: prefixo nos ficheiros
+        epoch: número do epoch (opcional)
+        batch_size: tamanho do batch
+        classifier_type: "vgg", "conv1d" ou None
+        vgg_adapter: adaptador (obrigatório se classifier_type == "vgg")
+        classifier_model: classificador VGG ou Conv1D
     """
     encoder.eval()
-    if vgg_model:
-        vgg_model.eval()
+    if classifier_model:
+        classifier_model.eval()
 
     data_loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate)
 
-    all_embeddings = []
-    all_labels = []
-    all_vgg_predictions = [] if vgg_model else None
+    all_embeddings, all_labels, all_predictions = [], [], []
 
     with torch.no_grad():
         for graphs, labels in data_loader:
             graphs = [g.to(device) for g in graphs]
             labels = labels.to(device)
-
-            embeddings = encoder(graphs)  # (batch_size, embedding_dim)
-            all_embeddings.append(embeddings.cpu())
-
             all_labels.append(labels.cpu())
 
-            if vgg_model and vgg_adapter:
-                embeddings_vgg = vgg_adapter(embeddings).to(device)
-                embeddings_vgg = adjust_to_vgg(embeddings_vgg)
-                predictions = vgg_model(embeddings_vgg)
-                preds = torch.argmax(predictions, dim=1)
-                all_vgg_predictions.append(preds.cpu())
+            embeddings = encoder(graphs)
 
+            if classifier_type == "vgg":
+                assert vgg_adapter is not None, "[save_embeddings] VGG adapter required."
+                batched_graph = embeddings  # encoder returned a DGLGraph
+                embeddings_vgg = vgg_adapter(batched_graph)
+                embeddings_vgg = adjust_to_vgg(embeddings_vgg)  # (B, C*H*W)
+                all_embeddings.append(embeddings_vgg.cpu())
+
+                if classifier_model:
+                    preds = classifier_model(embeddings_vgg.to(device)).argmax(dim=1)
+                    all_predictions.append(preds.cpu())
+
+            elif classifier_type == "conv1d":
+                all_embeddings.append(embeddings.cpu())
+
+                if classifier_model:
+                    preds = classifier_model(embeddings.to(device)).argmax(dim=1)
+                    all_predictions.append(preds.cpu())
+
+            else:
+                # Default mode: use global mean pooling
+                if isinstance(embeddings, dgl.DGLGraph):
+                    node_feats = embeddings.ndata['h']
+                    batch_sizes = embeddings.batch_num_nodes()
+                    split_feats = torch.split(node_feats, batch_sizes.tolist())
+                    pooled = torch.stack([f.mean(dim=0) for f in split_feats], dim=0)
+                    all_embeddings.append(pooled.cpu())
+                else:
+                    all_embeddings.append(embeddings.cpu())
+
+    # Concatenação
     embeddings_tensor = torch.cat(all_embeddings, dim=0)
     labels_tensor = torch.cat(all_labels, dim=0)
-
     suffix = f"{prefix}" + (f"_epoch{epoch}" if epoch is not None else "")
-    
-    # Saving embeddings and labels
-    embedding_path = os.path.join(embedding_dir, f"dgcnn_embeddings_{suffix}.pt")
-    labels_path = os.path.join(embedding_dir, f"{suffix}_labels.pt")
-    
-    torch.save(embeddings_tensor, embedding_path)
-    torch.save(labels_tensor, labels_path)
 
-    # Optionally saving VGG predictions
-    if all_vgg_predictions is not None:
-        predictions_tensor = torch.cat(all_vgg_predictions, dim=0)
-        predictions_path = os.path.join(embedding_dir, f"vgg_predictions_{suffix}.pt")
-        torch.save(predictions_tensor, predictions_path)
-
-    # Optional: Save embeddings as numpy for easier PCA usage
-    #np.save(os.path.join(embedding_dir, f"dgcnn_embeddings_{suffix}.npy"), embeddings_tensor.numpy())
-
-    # Logging
-    print(f"[save_embeddings] Saved embeddings at {embedding_path}")
-    print(f"[save_embeddings] Saved labels at {labels_path}")
-    if all_vgg_predictions is not None:
-        print(f"[save_embeddings] Saved VGG predictions at {predictions_path}")
+    # Salvar
+    torch.save(embeddings_tensor, os.path.join(embedding_dir, f"dgcnn_embeddings_{suffix}.pt"))
+    torch.save(labels_tensor, os.path.join(embedding_dir, f"{suffix}_labels.pt"))
     print(f"[save_embeddings] Embeddings shape: {embeddings_tensor.shape}")
+    print(f"[save_embeddings] Labels saved.")
+    print(f"[save_embeddings] Classifier type: {classifier_type}")
+
+    if all_predictions:
+        predictions_tensor = torch.cat(all_predictions, dim=0)
+        pred_filename = f"{classifier_type}_predictions_{suffix}.pt"
+        torch.save(predictions_tensor, os.path.join(embedding_dir, pred_filename))
+        print(f"[save_embeddings] {classifier_type.upper()} predictions saved.")
+
+    print("[save_embeddings] Done.")
+
+
 
 
 def log_hyperparameters(run_output_dir, params_dict):
@@ -397,158 +452,24 @@ def log_hyperparameters(run_output_dir, params_dict):
         f_latex.write("\\hline\n\\end{tabular}\n\\caption{Hiperparâmetros da execução}\n\\end{table}\n")
 
 
-sampler = WeightedRandomSampler(sample_weights[train_indices], num_samples=len(trainset), replacement=True)
-data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
+def adjust_to_vgg(samples):
+    padding_size = int((224 - samples.shape[3])/2)
+    if (samples.shape[3] % 2) != 0:
+        # odd number
+        padding_size_right = padding_size + 1
+    else:
+        padding_size_right = padding_size
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+    padding_size_dim2 = int((224 - samples.shape[2])/2)
+    if (samples.shape[2] % 2) != 0:
+        # odd number
+        padding_size_right_dim2 = padding_size_dim2 + 1
+    else:
+        padding_size_right_dim2 = padding_size_dim2
 
-# Initialize modules explicitly (modular setup)
-encoder = DGCNNEncoder(num_features, hidden_dimension, sortpooling_k=k_sortpooling).to(device)
+    x1 = F.pad(samples, (padding_size, padding_size_right, padding_size_dim2, padding_size_right_dim2))
 
-if classifier_type == "vgg":
-    vgg_adapter = DGCNNVGGAdapter(embedding_dim=sum(hidden_dimension), conv2d_channels=conv2dChannelParam).to(device)
-    classifier_model = VGGnet(in_channels=conv2dChannelParam).to(device)
-elif classifier_type == "conv1d":
-    classifier_model = DGCNNConv1DClassifier(input_dim=k_sortpooling * hidden_dimension[-1]).to(device)
-else:
-    raise ValueError("Invalid classifier type. Choose 'vgg' or 'conv1d'.")
-
-# Model name simplification
-model_name = "GAT4_sortpool20V2"
-
-# Hyperparameters dict clearly documented
-params_dict = {
-    "dataset_name": dataset_name,
-    "hidden_dimensions": hidden_dimension,
-    "normalization": normalization,
-    "num_epochs": num_epochs,
-    "undersampling_method": UNDERSAMPLING_METHOD or "None",
-    "undersampling_ratio": UNDERSAMPLING_STRAT,
-    "CEL_weight": CEL_weight,
-    "sample_weight_value": sample_weight_value,
-    "model": model_name,
-    "k_sortpooling": k_sortpooling,
-    "heads": heads,
-    "dropout_rate": dropout_rate,
-    "conv2dChannelParam": conv2dChannelParam,
-    "USE_AUTOENCODER": USE_AUTOENCODER,
-    "AUTOENCODER_EPOCHS": AUTOENCODER_EPOCHS,
-    "FREEZE_ENCODER": FREEZE_ENCODER
-}
-
-# Directory and artifacts setup
-artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_"
-artifact_suffix += f"us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}_w-{CEL_weight[0]}-{CEL_weight[1]}_"
-artifact_suffix += f"sw{sample_weight_value}_m-{model_name}_k-{k_sortpooling}_h{heads}_dr-{dropout_rate}_c2d-{conv2dChannelParam}_"
-artifact_suffix += f"ae-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-fz-{FREEZE_ENCODER}" if USE_AUTOENCODER else "noae"
-
-output_base_dir = "output/runs"
-run_output_dir = os.path.join(output_base_dir, artifact_suffix)
-embedding_dir = os.path.join(run_output_dir, "embeddings")
-prediction_dir = os.path.join(run_output_dir, "predictions")
-stats_dir = os.path.join(run_output_dir, "stats")
-
-for directory in [embedding_dir, prediction_dir, stats_dir]:
-    os.makedirs(directory, exist_ok=True)
-
-# Autoencoder training
-if USE_AUTOENCODER:
-    decoder = GraphDecoder(
-        embedding_dim=k_sortpooling * hidden_dimension[-1],
-        num_nodes=NUM_NODES,
-        feature_dim=num_features
-    ).to(device)
-
-    save_embeddings(encoder, testset, device,embedding_dir, prefix=f"before_training",epoch=num_epochs, batch_size=batch_size,vgg_adapter=vgg_adapter if classifier_type == "vgg" else None,vgg_model=classifier_model if classifier_type == "vgg" else None)
-
-    print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
-    train_autoencoder(encoder, decoder, data_loader, device,
-                      num_nodes=NUM_NODES, feature_dim=num_features,
-                      num_epochs=AUTOENCODER_EPOCHS, stats_dir=stats_dir)
-    print("[INFO] Autoencoder training completed.\n")
-
-    #save_embeddings(encoder, testset, device, embedding_dir, prefix="test_after_autoencoder", epoch=AUTOENCODER_EPOCHS, batch_size=batch_size)
-
-    if FREEZE_ENCODER:
-        for param in encoder.parameters():
-            param.requires_grad = False
-
-
-# Optimizer setup
-trainable_params = list(filter(lambda p: p.requires_grad, encoder.parameters()))
-if classifier_type == "vgg":
-    trainable_params += list(vgg_adapter.parameters()) + list(classifier_model.parameters())
-else:
-    trainable_params += list(classifier_model.parameters())
-
-optimizer = optim.Adam(trainable_params, lr=learning_rate)
-
-weight = torch.tensor(CEL_weight, dtype=torch.float, device=device)
-loss_func = nn.CrossEntropyLoss(weight=weight)
-
-# Initial embedding save (without autoencoder)
-#if not USE_AUTOENCODER:
-#    save_embeddings(encoder, trainset, device, embedding_dir, prefix="train_before_training", epoch=0, batch_size=batch_size
-
-# Training phase
-encoder.train()
-if classifier_type == "vgg":
-    vgg_adapter.train()
-classifier_model.train()
-
-stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
-
-print("\n========= Starting Training Phase ==========")
-for epoch in range(num_epochs):
-    total_loss, correct, total = 0, 0, 0
-
-    for graphs, labels in data_loader:
-        graphs = [g.to(device) for g in graphs]
-        labels = labels.to(device)
-
-        embeddings = encoder(graphs)
-        if classifier_type == "vgg":
-            vgg_input = adjust_to_vgg(vgg_adapter(embeddings))
-            predictions = classifier_model(vgg_input)
-        else:
-            predictions = classifier_model(embeddings)
-
-        loss = loss_func(predictions, labels)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item()
-        correct += (predictions.argmax(dim=1) == labels).sum().item()
-        total += labels.size(0)
-
-    epoch_loss = total_loss / len(data_loader)
-    accuracy = correct / total
-
-    stats_dict['epoch'].append(epoch)
-    stats_dict['loss'].append(epoch_loss)
-    stats_dict['accuracy'].append(accuracy)
-
-    print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
-
-# Post-training embedding save
-suffix = "after_autoencoder_vgg" if USE_AUTOENCODER else "after_training"
-#save_embeddings( encoder, testset, device, embedding_dir, prefix=f"test_{suffix}", epoch=num_epochs, batch_size=batch_size, vgg_adapter=vgg_adapter, vgg_model=vgg_model)
-
-# Save stats clearly
-df_stats = pd.DataFrame(stats_dict).set_index('epoch')
-df_stats.plot(figsize=(8, 5))
-plt.xlabel('Epoch')
-plt.title('Training Loss and Accuracy')
-plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
-plt.close()
-
-# Evaluation Phase
-encoder.eval()
-if classifier_type == "vgg":
-    vgg_adapter.eval()
-classifier_model.eval()
+    return x1
 
 def format_hidden_dim(hd):
         return '-'.join(map(str, hd)) if isinstance(hd, list) else str(hd)
@@ -578,7 +499,8 @@ sample_weights = df['sample_weight'].values
 # Dataset split
 dataset_size = len(df)
 indices = np.arange(dataset_size)
-np.random.seed(10)
+#np.random.seed(10)
+np.random.seed(int(time.time()) % (2**32 - 1)) 
 np.random.shuffle(indices)
 
 split = int(np.floor(0.3 * dataset_size))
@@ -679,7 +601,11 @@ data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sa
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Initialize modules explicitly (modular setup)
-encoder = DGCNNEncoder(num_features, hidden_dimension, sortpooling_k=k_sortpooling).to(device)
+if classifier_type == "vgg":
+    encoder = DGCNNEncoder(num_features, hidden_dimension, use_sortpool=False).to(device)
+else:
+    encoder = DGCNNEncoder(num_features, hidden_dimension, sortpooling_k=k_sortpooling, use_sortpool=True).to(device)
+
 
 if classifier_type == "vgg":
     vgg_adapter = DGCNNVGGAdapter(embedding_dim=sum(hidden_dimension), conv2d_channels=conv2dChannelParam).to(device)
@@ -688,6 +614,10 @@ elif classifier_type == "conv1d":
     classifier_model = DGCNNConv1DClassifier(input_dim=k_sortpooling * hidden_dimension[-1]).to(device)
 else:
     raise ValueError("Invalid classifier type. Choose 'vgg' or 'conv1d'.")
+
+# Prepara argumentos comuns para save_embeddings
+vgg_adapter_arg = vgg_adapter if classifier_type == "vgg" else None
+classifier_model_arg = classifier_model if classifier_type in ["vgg", "conv1d"] else None
 
 # Model name simplification
 model_name = "GAT4_sortpool20V2"
@@ -709,14 +639,17 @@ params_dict = {
     "conv2dChannelParam": conv2dChannelParam,
     "USE_AUTOENCODER": USE_AUTOENCODER,
     "AUTOENCODER_EPOCHS": AUTOENCODER_EPOCHS,
-    "FREEZE_ENCODER": FREEZE_ENCODER
+    "FREEZE_ENCODER": FREEZE_ENCODER,
+    "classifier_type": classifier_type
 }
 
 # Directory and artifacts setup
-artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_e{num_epochs}_"
-artifact_suffix += f"us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}_w-{CEL_weight[0]}-{CEL_weight[1]}_"
-artifact_suffix += f"sw{sample_weight_value}_m-{model_name}_k-{k_sortpooling}_h{heads}_dr-{dropout_rate}_c2d-{conv2dChannelParam}_"
+artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_clf-{classifier_type}_"
+artifact_suffix += f"e{num_epochs}_us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}_"
+artifact_suffix += f"w-{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_m-{model_name}_"
+artifact_suffix += f"k-{k_sortpooling}_h{heads}_dr-{dropout_rate}_c2d-{conv2dChannelParam}_"
 artifact_suffix += f"ae-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-fz-{FREEZE_ENCODER}" if USE_AUTOENCODER else "noae"
+
 
 output_base_dir = "output/runs"
 run_output_dir = os.path.join(output_base_dir, artifact_suffix)
@@ -730,20 +663,16 @@ for directory in [embedding_dir, prediction_dir, stats_dir]:
 # Autoencoder training
 if USE_AUTOENCODER:
     decoder = GraphDecoder(
-        embedding_dim=k_sortpooling * hidden_dimension[-1],
+        embedding_dim=hidden_dimension[-1],
         num_nodes=NUM_NODES,
         feature_dim=num_features
     ).to(device)
-
-    save_embeddings(encoder, testset, device,embedding_dir, prefix=f"before_training",epoch=num_epochs, batch_size=batch_size,vgg_adapter=vgg_adapter if classifier_type == "vgg" else None,vgg_model=classifier_model if classifier_type == "vgg" else None)
 
     print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
     train_autoencoder(encoder, decoder, data_loader, device,
                       num_nodes=NUM_NODES, feature_dim=num_features,
                       num_epochs=AUTOENCODER_EPOCHS, stats_dir=stats_dir)
     print("[INFO] Autoencoder training completed.\n")
-
-    #save_embeddings(encoder, testset, device, embedding_dir, prefix="test_after_autoencoder", epoch=AUTOENCODER_EPOCHS, batch_size=batch_size)
 
     if FREEZE_ENCODER:
         for param in encoder.parameters():
@@ -762,10 +691,6 @@ optimizer = optim.Adam(trainable_params, lr=learning_rate)
 weight = torch.tensor(CEL_weight, dtype=torch.float, device=device)
 loss_func = nn.CrossEntropyLoss(weight=weight)
 
-# Initial embedding save (without autoencoder)
-#if not USE_AUTOENCODER:
-#    save_embeddings(encoder, trainset, device, embedding_dir, prefix="train_before_training", epoch=0, batch_size=batch_size
-
 # Training phase
 encoder.train()
 if classifier_type == "vgg":
@@ -773,6 +698,19 @@ if classifier_type == "vgg":
 classifier_model.train()
 
 stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
+
+save_embeddings(
+    encoder=encoder,
+    dataset=testset,
+    device=device,
+    embedding_dir=embedding_dir,
+    prefix="before_training",
+    epoch=num_epochs,
+    batch_size=batch_size,
+    classifier_type=classifier_type,
+    vgg_adapter=vgg_adapter_arg,
+    classifier_model=classifier_model_arg
+)
 
 print("\n========= Starting Training Phase ==========")
 for epoch in range(num_epochs):
@@ -784,7 +722,8 @@ for epoch in range(num_epochs):
 
         embeddings = encoder(graphs)
         if classifier_type == "vgg":
-            vgg_input = adjust_to_vgg(vgg_adapter(embeddings))
+            batched_graph = embeddings  # returned from encoder when use_sortpool=False
+            vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
             predictions = classifier_model(vgg_input)
         else:
             predictions = classifier_model(embeddings)
@@ -808,9 +747,6 @@ for epoch in range(num_epochs):
 
     print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
 
-# Post-training embedding save
-suffix = "after_autoencoder_vgg" if USE_AUTOENCODER else "after_training"
-#save_embeddings( encoder, testset, device, embedding_dir, prefix=f"test_{suffix}", epoch=num_epochs, batch_size=batch_size, vgg_adapter=vgg_adapter, vgg_model=vgg_model)
 
 # Save stats clearly
 df_stats = pd.DataFrame(stats_dict).set_index('epoch')
@@ -819,6 +755,19 @@ plt.xlabel('Epoch')
 plt.title('Training Loss and Accuracy')
 plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
 plt.close()
+
+save_embeddings(
+    encoder=encoder,
+    dataset=testset,
+    device=device,
+    embedding_dir=embedding_dir,
+    prefix="after_training",
+    epoch=num_epochs,
+    batch_size=batch_size,
+    classifier_type=classifier_type,
+    vgg_adapter=vgg_adapter_arg,
+    classifier_model=classifier_model_arg
+)
 
 # Evaluation Phase
 encoder.eval()
@@ -836,7 +785,8 @@ with torch.no_grad():
 
         embeddings = encoder(graphs)
         if classifier_type == "vgg":
-            vgg_input = adjust_to_vgg(vgg_adapter(embeddings))
+            batched_graph = embeddings  # encoder returned the batched graph
+            vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
             preds = classifier_model(vgg_input).argmax(dim=1).cpu().numpy()
         else:
             preds = classifier_model(embeddings).argmax(dim=1).cpu().numpy()
