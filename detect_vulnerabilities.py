@@ -40,8 +40,8 @@ graph_type = 'cfg' #
 #else:
 #    dataset_name = f"{graph_type}-dataset-{project}"
 
-#dataset_name = 'cfg-dataset-linux-v0.5_filtered'
-dataset_name = 'cfg-dataset-linux-sample1k'
+dataset_name = 'cfg-dataset-linux-v0.5_filtered'
+#dataset_name = 'cfg-dataset-linux-sample1k'
 dataset_path = 'datasets/'
 
 if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
@@ -69,7 +69,7 @@ USE_AUTOENCODER = True
 NUM_NODES = 55  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
-AUTOENCODER_EPOCHS = 20
+AUTOENCODER_EPOCHS = 10
 
 classifier_type = "conv1d"  # ou "vgg" ou "conv1d"
 
@@ -83,7 +83,7 @@ k_sortpooling = 16 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 #0.001 #0.01 #0.1 #0.0005
-num_epochs = 20 #2000 #500 # 1000
+num_epochs = 10 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
@@ -206,19 +206,20 @@ class DGCNNConv1DClassifier(nn.Module):
 class GraphDecoder(nn.Module):
     def __init__(self, embedding_dim, num_nodes, feature_dim):
         super(GraphDecoder, self).__init__()
-        self.num_nodes = num_nodes
+        self.num_nodes = num_nodes  # ← should be `k` from SortPooling
         self.feature_dim = feature_dim
 
         self.reconstruct_features = nn.Sequential(
             nn.Linear(embedding_dim, 512),
             nn.ReLU(),
             nn.Linear(512, num_nodes * feature_dim),
-            nn.Sigmoid()  # use Identity if not normalized
+            nn.Sigmoid()  # Identity if not normalized
         )
 
     def forward(self, z):
-        out = self.reconstruct_features(z)  # (batch_size, num_nodes * feature_dim)
+        out = self.reconstruct_features(z)
         return out.view(-1, self.num_nodes, self.feature_dim)
+
 
 def pad_graph(g, target_nodes, feature_dim):
     if g.num_nodes() != g.ndata['features'].shape[0]:
@@ -240,7 +241,7 @@ def pad_graph(g, target_nodes, feature_dim):
     return g
 
 
-def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_dim, num_epochs=20, stats_dir="stats"):
+def train_autoencoder(encoder, decoder, data_loader, device, sortpooling_k, feature_dim, num_epochs=20, stats_dir="stats"):
     encoder.train()
     decoder.train()
 
@@ -254,23 +255,30 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
         num_batches = 0
 
         for graphs, _ in data_loader:
-            # Padding dos grafos
-            padded_X = [pad_graph(g, num_nodes, feature_dim).ndata['features'] for g in graphs]
-            X_orig = torch.stack(padded_X).to(device)
             graphs = [g.to(device) for g in graphs]
 
-            # Recupera embeddings de nós antes do pooling
-            h_all, batched_graph = encoder(graphs, return_node_embeddings=True)
-            batched_graph.ndata['h'] = h_all
+            # Forward pass — usamos SortPooling (output: (B, k * D))
+            z = encoder(graphs)  # encoder.forward → retorna embeddings já com pooling (B, k * D)
 
-            batch_sizes = batched_graph.batch_num_nodes()
-            split_feats = torch.split(h_all, batch_sizes.tolist())
-            z = torch.stack([feat.mean(dim=0) for feat in split_feats], dim=0)  # (B, D)
+            # Criar ground truth com os k primeiros nós reais de cada grafo (sem padding!)
+            X_orig_list = []
+            for g in graphs:
+                node_feats = g.ndata['features'].float()
+                if node_feats.size(0) >= sortpooling_k:
+                    selected = node_feats[:sortpooling_k]
+                else:
+                    # Pad com zeros se o grafo tiver menos de k nós
+                    pad = torch.zeros(sortpooling_k - node_feats.size(0), feature_dim, device=node_feats.device)
+                    selected = torch.cat([node_feats, pad], dim=0)
+                X_orig_list.append(selected)
 
-            # Reconstrução dos features
-            X_rec = decoder(z)
+            X_orig = torch.stack(X_orig_list).to(device)  # (B, k, F)
+
+            # Reconstrução
+            X_rec = decoder(z)  # (B, k, F)
             loss = loss_func(X_rec, X_orig)
 
+            # Otimização
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -300,6 +308,7 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
     csv_path = os.path.join(stats_dir, "autoencoder_loss.csv")
     loss_df.to_csv(csv_path, index=False)
     print(f"[Autoencoder] Loss history saved to {csv_path}")
+
 
 
 def apply_undersampling(df, strategy=0.5, method="random", n_clusters=None):
@@ -665,20 +674,28 @@ for directory in [embedding_dir, prediction_dir, stats_dir]:
 # Autoencoder training
 if USE_AUTOENCODER:
     decoder = GraphDecoder(
-        embedding_dim=hidden_dimension[-1],
-        num_nodes=NUM_NODES,
+        embedding_dim=k_sortpooling * hidden_dimension[-1],
+        num_nodes=k_sortpooling,
         feature_dim=num_features
     ).to(device)
 
     print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
-    train_autoencoder(encoder, decoder, data_loader, device,
-                      num_nodes=NUM_NODES, feature_dim=num_features,
-                      num_epochs=AUTOENCODER_EPOCHS, stats_dir=stats_dir)
+    train_autoencoder(
+        encoder=encoder,
+        decoder=decoder,
+        data_loader=data_loader,
+        device=device,
+        sortpooling_k=k_sortpooling,
+        feature_dim=num_features,
+        num_epochs=AUTOENCODER_EPOCHS,
+        stats_dir=stats_dir
+    )
     print("[INFO] Autoencoder training completed.\n")
 
     if FREEZE_ENCODER:
         for param in encoder.parameters():
             param.requires_grad = False
+
 
 
 # Optimizer setup
