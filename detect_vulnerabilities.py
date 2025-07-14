@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.cluster import KMeans
+from sklearn.model_selection import train_test_split
 from imblearn.under_sampling import RandomUnderSampler, ClusterCentroids
 from torchvision.ops import sigmoid_focal_loss
 from torch_geometric.nn import GCNConv
@@ -40,8 +41,8 @@ graph_type = 'cfg' #
 #else:
 #    dataset_name = f"{graph_type}-dataset-{project}"
 
-dataset_name = 'cfg-dataset-linux-v0.5_filtered'
-#dataset_name = 'cfg-dataset-linux-sample1k'
+#dataset_name = 'cfg-dataset-linux-v0.5_filtered'
+dataset_name = 'cfg-dataset-linux-sample1k'
 dataset_path = 'datasets/'
 
 if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
@@ -63,26 +64,29 @@ normalization = MINMAX #ZNORM
 #pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
 
 UNDERSAMPLING_STRAT= 0.2
-UNDERSAMPLING_METHOD = "random" # "random" "kmeans" #None
+UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 
-USE_AUTOENCODER = True
+AUTO_WEIGHTING = True
+USE_CLASS_WEIGHT = True
+sample_weight_value = 1
+CEL_weight = [1,1]
+
+USE_AUTOENCODER = False
 NUM_NODES = 55  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 10
 
-classifier_type = "conv1d"  # ou "vgg" ou "conv1d"
+classifier_type = "vgg"  # ou "vgg" ou "conv1d"
 
 
 heads = 4 # 2
-hidden_dimension = [32, 32, 32, 32] #[[128, 64, 32, 32], [32, 32, 32, 32]] #[32, 64, 128, [128, 64, 32, 32], [32, 32, 32, 32]] # [32, 64, 128] # [[128, 64, 32, 32], 32, 64, 128]
-sample_weight_value = 0 #90 #100 #80 #60 # 40
-CEL_weight = [1,4]
+hidden_dimension = [32, 32, 32, 32] 
 batch_size = 10
 k_sortpooling = 16 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
-learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 #0.001 #0.01 #0.1 #0.0005
+learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 
 num_epochs = 10 #2000 #500 # 1000
 
 if graph_type == 'cfg':
@@ -117,7 +121,7 @@ class DGCNNEncoder(nn.Module):
 
         self.amp_pool = nn.AdaptiveMaxPool1d(sortpooling_k)
 
-    def forward(self, graphs, return_node_embeddings=False, use_amp_pooling=False):
+    def forward(self, graphs, return_node_embeddings=False):
         batch_node_features = []
 
         for g in graphs:
@@ -134,15 +138,6 @@ class DGCNNEncoder(nn.Module):
 
         if return_node_embeddings:
             return h_all, batched_graph
-
-        if use_amp_pooling:
-            batch_sizes = batched_graph.batch_num_nodes()
-            split_feats = torch.split(h_all, batch_sizes.tolist())
-            
-            # Aplica AMP pooling para garantir dimensões fixas
-            amp_pooled = torch.stack([self.amp_pool(feat.T).flatten() for feat in split_feats], dim=0)
-            embeddings = self.dropout(amp_pooled)
-            return embeddings  # (B, k * hidden_dim[-1])
 
         if self.use_sortpool:
             h_pooled = self.sortpool(batched_graph, h_all)
@@ -216,14 +211,13 @@ class DGCNNConv1DClassifier(nn.Module):
 class GraphDecoder(nn.Module):
     def __init__(self, embedding_dim, num_nodes, feature_dim):
         super(GraphDecoder, self).__init__()
-        self.num_nodes = num_nodes  # ← should be `k` from SortPooling
+        self.num_nodes = num_nodes 
         self.feature_dim = feature_dim
 
         self.reconstruct_features = nn.Sequential(
-            nn.Linear(embedding_dim, 512),
+            nn.Linear(embedding_dim * num_nodes, 512),
             nn.ReLU(),
             nn.Linear(512, num_nodes * feature_dim),
-            nn.Sigmoid()  # Identity if not normalized
         )
 
     def forward(self, z):
@@ -231,32 +225,12 @@ class GraphDecoder(nn.Module):
         return out.view(-1, self.num_nodes, self.feature_dim)
 
 
-def pad_graph(g, target_nodes, feature_dim):
-    if g.num_nodes() != g.ndata['features'].shape[0]:
-        raise ValueError(f"[pad_graph] Inconsistência: g.num_nodes() = {g.num_nodes()} "
-                         f"mas g.ndata['features'].shape[0] = {g.ndata['features'].shape[0]}")
-
-    if g.num_nodes() >= target_nodes:
-        # Truncar se for maior
-        g = dgl.node_subgraph(g, torch.arange(target_nodes))
-        g.ndata['features'] = g.ndata['features'][:target_nodes]
-        return g
-
-    # Padding com zeros
-    g.add_nodes(target_nodes - g.num_nodes())
-    padded_features = torch.zeros(target_nodes, feature_dim, device=g.device)
-    padded_features[:g.ndata['features'].shape[0]] = g.ndata['features']
-    g.ndata['features'] = padded_features
-
-    return g
-
-
-def train_autoencoder(encoder, decoder, data_loader, device, sortpooling_k, feature_dim, num_epochs=20, stats_dir="stats", use_amp_pooling=False):
+def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_dim, num_epochs=20, stats_dir="stats"):
     encoder.train()
     decoder.train()
 
     opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=learning_rate_ae)
-    loss_func = nn.BCELoss()
+    loss_func = nn.MSELoss()
 
     epoch_losses = []
 
@@ -267,27 +241,35 @@ def train_autoencoder(encoder, decoder, data_loader, device, sortpooling_k, feat
         for graphs, _ in data_loader:
             graphs = [g.to(device) for g in graphs]
 
-            # Usa AMP ou SortPooling dependendo do classifier
-            z = encoder(graphs, use_amp_pooling=use_amp_pooling)
+            # Obtem os embeddings dos nós antes do pooling
+            node_embeddings, batched_graph = encoder(graphs, return_node_embeddings=True)
 
-            # Criar ground truth com os k primeiros nós reais de cada grafo (sem padding!)
-            X_orig_list = []
-            for g in graphs:
-                node_feats = g.ndata['features'].float()
-                if node_feats.size(0) >= sortpooling_k:
-                    selected = node_feats[:sortpooling_k]
+            # Divide embeddings por grafo
+            batch_sizes = batched_graph.batch_num_nodes()
+            split_embeddings = torch.split(node_embeddings, batch_sizes.tolist())
+
+            # Pad para tamanho fixo (num_nodes)
+            padded_input = []
+            ground_truth = []
+
+            for g, embed in zip(graphs, split_embeddings):
+                x_real = g.ndata['features'].float()
+
+                if embed.size(0) >= num_nodes:
+                    padded_input.append(embed[:num_nodes])
+                    ground_truth.append(x_real[:num_nodes])
                 else:
-                    pad = torch.zeros(sortpooling_k - node_feats.size(0), feature_dim, device=node_feats.device)
-                    selected = torch.cat([node_feats, pad], dim=0)
-                X_orig_list.append(selected)
+                    pad_embed = torch.zeros(num_nodes - embed.size(0), embed.size(1), device=device)
+                    pad_real = torch.zeros(num_nodes - x_real.size(0), feature_dim, device=device)
+                    padded_input.append(torch.cat([embed, pad_embed], dim=0))
+                    ground_truth.append(torch.cat([x_real, pad_real], dim=0))
 
-            X_orig = torch.stack(X_orig_list).to(device)  # (B, k, F)
+            Z = torch.stack(padded_input)     # (B, num_nodes, embed_dim)
+            X_orig = torch.stack(ground_truth)  # (B, num_nodes, feature_dim)
 
-            # Reconstrução
-            X_rec = decoder(z)  # (B, k, F)
+            X_rec = decoder(Z.view(Z.size(0), -1))  # Flatten to (B, num_nodes * embed_dim)
             loss = loss_func(X_rec, X_orig)
 
-            # Otimização
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -298,27 +280,24 @@ def train_autoencoder(encoder, decoder, data_loader, device, sortpooling_k, feat
         avg_loss = total_loss / num_batches
         epoch_losses.append(avg_loss)
         print(f"[Autoencoder] Epoch {epoch}, Loss: {avg_loss:.4f}")
+        if epoch in [num_epochs-1] and DEBUG:
+            print("[DEBUG] Real vs. Reconstructed (primeiro grafo)")
+            print("X_orig:", X_orig[0].cpu().detach().numpy())
+            print("X_rec: ", X_rec[0].cpu().detach().numpy())
 
-    # Plot e CSV
+    # Gravação de stats
+    os.makedirs(stats_dir, exist_ok=True)
     plt.figure()
-    plt.plot(range(num_epochs), epoch_losses, marker='o', color='b')
+    plt.plot(range(num_epochs), epoch_losses, marker='o')
     plt.xlabel("Epoch")
-    plt.ylabel("Reconstruction Loss (BCE)")
+    plt.ylabel("Reconstruction Loss (MSE)")
     plt.title("Autoencoder Training Loss Curve")
     plt.grid(True)
-
-    os.makedirs(stats_dir, exist_ok=True)
-    loss_plot_path = os.path.join(stats_dir, "autoencoder_loss_curve.png")
-    plt.savefig(loss_plot_path)
+    plt.savefig(os.path.join(stats_dir, "autoencoder_loss_curve.png"))
     plt.close()
-    print(f"[Autoencoder] Loss plot saved to {loss_plot_path}")
 
     loss_df = pd.DataFrame({"epoch": list(range(num_epochs)), "loss": epoch_losses})
-    csv_path = os.path.join(stats_dir, "autoencoder_loss.csv")
-    loss_df.to_csv(csv_path, index=False)
-    print(f"[Autoencoder] Loss history saved to {csv_path}")
-
-
+    loss_df.to_csv(os.path.join(stats_dir, "autoencoder_loss.csv"), index=False)
 
 def apply_undersampling(df, strategy=0.5, method="random", n_clusters=None):
     if method is None:
@@ -514,20 +493,40 @@ if UNDERSAMPLING_METHOD:
     print(f"  - Vulnerable: {df_resampled['label'].sum()} | Non-vulnerable: {len(df_resampled) - df_resampled['label'].sum()}")
 
 df = df_resampled
-sample_weights = df['sample_weight'].values
 
 # Dataset split
-dataset_size = len(df)
-indices = np.arange(dataset_size)
-#np.random.seed(10)
-np.random.seed(int(time.time()) % (2**32 - 1)) 
-np.random.shuffle(indices)
+trainset_df, testset_df = train_test_split(
+    df[['graphs', 'label']],
+    test_size=0.3,
+    stratify=df['label'],
+    random_state=42
+)
 
-split = int(np.floor(0.3 * dataset_size))
-train_indices, test_indices = indices[split:], indices[:split]
+trainset = trainset_df.values
+testset = testset_df.values
 
-trainset = df[['graphs', 'label']].values[train_indices]
-testset = df[['graphs', 'label']].values[test_indices]
+# Recalcula os pesos com base nos labels do trainset
+train_labels = trainset[:, 1].astype(int)
+
+if AUTO_WEIGHTING:
+    class_counts = np.bincount(train_labels)
+    class_weights = [len(train_labels) / class_counts[i] for i in range(len(class_counts))]
+    CEL_weight = class_weights  # [w_non_vuln, w_vuln]
+    sample_weight_value = class_counts[0] / class_counts[1]
+    print(f"[INFO] Auto-weighting: {CEL_weight}, sample_weight_value: {sample_weight_value}")
+else:
+    class_weights = CEL_weight  # já definido no topo
+
+if not USE_CLASS_WEIGHT:
+    sample_weights = 1 + train_labels * sample_weight_value
+    sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
+    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
+    print(f"[INFO] Using manual sample weights: {sample_weights[:10]}... (first 10 samples)")
+else:
+    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, shuffle=True)
+
+
+sample_weights = 1 + train_labels * sample_weight_value
 
 
 ###########################################################
@@ -615,8 +614,12 @@ print("len(trainset):", len(trainset))
 ###########################################################
 
 
-sampler = WeightedRandomSampler(sample_weights[train_indices], num_samples=len(trainset), replacement=True)
+sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
 data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
+
+# (Opcional) debug para garantir que as proporções estão corretas
+print(f"[DEBUG] Trainset: {sum(train_labels)} vulnerable / {len(train_labels)} total")
+print(f"[DEBUG] Testset:  {sum(testset[:,1])} vulnerable / {len(testset)} total")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -650,6 +653,10 @@ params_dict = {
     "num_epochs": num_epochs,
     "undersampling_method": UNDERSAMPLING_METHOD or "None",
     "undersampling_ratio": UNDERSAMPLING_STRAT,
+    "auto_weighting": AUTO_WEIGHTING,
+    "use_class_weight": USE_CLASS_WEIGHT,
+    "auto_CEL_weight": CEL_weight,
+    "auto_sample_weight_value": sample_weight_value,
     "CEL_weight": CEL_weight,
     "sample_weight_value": sample_weight_value,
     "model": model_name,
@@ -664,11 +671,28 @@ params_dict = {
 }
 
 # Directory and artifacts setup
-artifact_suffix = f"{dataset_name}_hd-{format_hidden_dim(hidden_dimension)}_norm-{normalization}_clf-{classifier_type}_"
-artifact_suffix += f"e{num_epochs}_us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}_"
-artifact_suffix += f"w-{CEL_weight[0]}-{CEL_weight[1]}_sw{sample_weight_value}_m-{model_name}_"
-artifact_suffix += f"k-{k_sortpooling}_h{heads}_dr-{dropout_rate}_c2d-{conv2dChannelParam}_"
-artifact_suffix += f"ae-{USE_AUTOENCODER}-aep-{AUTOENCODER_EPOCHS}-fz-{FREEZE_ENCODER}" if USE_AUTOENCODER else "noae"
+artifact_suffix = (
+    f"{dataset_name}"
+    f"_hd-{format_hidden_dim(hidden_dimension)}"
+    f"_norm-{normalization}"
+    f"_clf-{classifier_type}"
+    f"_ep{num_epochs}"
+    f"_us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}"
+    f"_cw-{int(CEL_weight[0])}-{int(CEL_weight[1])}"
+    f"_swv{round(sample_weight_value, 2)}"
+    f"_k{k_sortpooling}"
+    f"_dr{dropout_rate}"
+    f"_c2d{conv2dChannelParam}"
+    f"_ae{int(USE_AUTOENCODER)}"
+)
+
+if classifier_type == "vgg":
+    artifact_suffix += f"_c2d{conv2dChannelParam}"
+
+artifact_suffix += (
+    f"_ae{int(USE_AUTOENCODER)}"
+    f"-aep{AUTOENCODER_EPOCHS}-fz{int(FREEZE_ENCODER)}" if USE_AUTOENCODER else "_noae"
+)
 
 
 output_base_dir = "output/runs"
@@ -680,11 +704,10 @@ stats_dir = os.path.join(run_output_dir, "stats")
 for directory in [embedding_dir, prediction_dir, stats_dir]:
     os.makedirs(directory, exist_ok=True)
 
-# Autoencoder training
 if USE_AUTOENCODER:
     decoder = GraphDecoder(
-        embedding_dim=k_sortpooling * hidden_dimension[-1],
-        num_nodes=k_sortpooling,
+        embedding_dim=hidden_dimension[-1],  # ← novo: só a última camada do encoder
+        num_nodes=NUM_NODES,
         feature_dim=num_features
     ).to(device)
 
@@ -694,11 +717,10 @@ if USE_AUTOENCODER:
         decoder=decoder,
         data_loader=data_loader,
         device=device,
-        sortpooling_k=k_sortpooling,
+        num_nodes=NUM_NODES,
         feature_dim=num_features,
         num_epochs=AUTOENCODER_EPOCHS,
-        stats_dir=stats_dir,
-        use_amp_pooling=(classifier_type == "vgg") # ← define aqui claramente
+        stats_dir=stats_dir
     )
     print("[INFO] Autoencoder training completed.\n")
 
@@ -717,7 +739,7 @@ else:
 
 optimizer = optim.Adam(trainable_params, lr=learning_rate)
 
-weight = torch.tensor(CEL_weight, dtype=torch.float, device=device)
+weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
 loss_func = nn.CrossEntropyLoss(weight=weight)
 
 # Training phase
