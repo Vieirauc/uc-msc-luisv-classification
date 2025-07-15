@@ -24,6 +24,7 @@ from sklearn.model_selection import train_test_split
 from imblearn.under_sampling import RandomUnderSampler, ClusterCentroids
 from torchvision.ops import sigmoid_focal_loss
 from torch_geometric.nn import GCNConv
+from torchvision.ops import sigmoid_focal_loss
 
 from detect_vulnerabilities_vgg import VGGnet
 
@@ -66,10 +67,15 @@ normalization = MINMAX #ZNORM
 UNDERSAMPLING_STRAT= 0.2
 UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 
+USE_FOCAL_LOSS = False
+alpha = 0.5
+gamma = 2.0
+
 AUTO_WEIGHTING = True
 USE_CLASS_WEIGHT = True
+USE_BOTH_WEIGHTING = False  # ⚠️ só para testes controlados
 sample_weight_value = 1
-CEL_weight = [1,1]
+CEL_weight = [1,2]
 
 USE_AUTOENCODER = False
 NUM_NODES = 55  # padding fixo
@@ -87,7 +93,7 @@ k_sortpooling = 16 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 
-num_epochs = 10 #2000 #500 # 1000
+num_epochs = 15 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
@@ -337,31 +343,22 @@ def write_file(filename, rows):
         for row in rows:
             output_file.write(" ".join([str(a) for a in row.tolist()]) + '\n')
 
-def save_embeddings(encoder, dataset, device, embedding_dir, prefix, epoch=None,
-                    batch_size=10, classifier_type=None, vgg_adapter=None, classifier_model=None):
+def save_embeddings(encoder, dataset, device, embedding_dir, prediction_dir,
+                    prefix, batch_size=10, classifier_type=None,
+                    vgg_adapter=None, classifier_model=None):
     """
-    Salva embeddings da DGCNN + previsões do classificador (se houver) + labels.
-    Suporta: vgg, conv1d, ou apenas extração de embeddings.
+    Salva embeddings da DGCNN, predições do classificador e labels.
 
-    Args:
-        encoder: modelo DGCNNEncoder
-        dataset: dataset de teste ou validação
-        device: cuda ou cpu
-        embedding_dir: diretório de saída
-        prefix: prefixo nos ficheiros
-        epoch: número do epoch (opcional)
-        batch_size: tamanho do batch
-        classifier_type: "vgg", "conv1d" ou None
-        vgg_adapter: adaptador (obrigatório se classifier_type == "vgg")
-        classifier_model: classificador VGG ou Conv1D
+    Salva em:
+        - embedding_dir: embeddings da DGCNN + labels
+        - prediction_dir: features para classificador + predições
     """
     encoder.eval()
     if classifier_model:
         classifier_model.eval()
 
     data_loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate)
-
-    all_embeddings, all_labels, all_predictions = [], [], []
+    all_dgcnn_embeddings, all_vgg_features, all_predictions, all_labels = [], [], [], []
 
     with torch.no_grad():
         for graphs, labels in data_loader:
@@ -369,57 +366,41 @@ def save_embeddings(encoder, dataset, device, embedding_dir, prefix, epoch=None,
             labels = labels.to(device)
             all_labels.append(labels.cpu())
 
-            embeddings = encoder(graphs)
-
             if classifier_type == "vgg":
-                assert vgg_adapter is not None, "[save_embeddings] VGG adapter required."
-                batched_graph = embeddings  # encoder returned a DGLGraph
-                embeddings_vgg = vgg_adapter(batched_graph)
-                embeddings_vgg = adjust_to_vgg(embeddings_vgg)  # (B, C*H*W)
-                all_embeddings.append(embeddings_vgg.cpu())
+                batched_graph = encoder(graphs)
+                node_embeddings = batched_graph.ndata['h']
+                batch_sizes = batched_graph.batch_num_nodes()
+                split_feats = torch.split(node_embeddings, batch_sizes.tolist())
+                pooled = torch.stack([f.mean(dim=0) for f in split_feats], dim=0)
+                all_dgcnn_embeddings.append(pooled.cpu())
 
-                if classifier_model:
-                    preds = classifier_model(embeddings_vgg.to(device)).argmax(dim=1)
-                    all_predictions.append(preds.cpu())
+                vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
+                all_vgg_features.append(vgg_input.cpu())
+
+                preds = classifier_model(vgg_input.to(device)).argmax(dim=1)
+                all_predictions.append(preds.cpu())
 
             elif classifier_type == "conv1d":
-                all_embeddings.append(embeddings.cpu())
+                embeddings = encoder(graphs)  # SortPooling embeddings
+                all_dgcnn_embeddings.append(embeddings.cpu())
+                all_vgg_features.append(embeddings.cpu())
 
-                if classifier_model:
-                    preds = classifier_model(embeddings.to(device)).argmax(dim=1)
-                    all_predictions.append(preds.cpu())
+                preds = classifier_model(embeddings.to(device)).argmax(dim=1)
+                all_predictions.append(preds.cpu())
 
-            else:
-                # Default mode: use global mean pooling
-                if isinstance(embeddings, dgl.DGLGraph):
-                    node_feats = embeddings.ndata['h']
-                    batch_sizes = embeddings.batch_num_nodes()
-                    split_feats = torch.split(node_feats, batch_sizes.tolist())
-                    pooled = torch.stack([f.mean(dim=0) for f in split_feats], dim=0)
-                    all_embeddings.append(pooled.cpu())
-                else:
-                    all_embeddings.append(embeddings.cpu())
-
-    # Concatenação
-    embeddings_tensor = torch.cat(all_embeddings, dim=0)
+    # Concatena resultados
+    dgcnn_tensor = torch.cat(all_dgcnn_embeddings, dim=0)
+    vgg_feat_tensor = torch.cat(all_vgg_features, dim=0)
+    pred_tensor = torch.cat(all_predictions, dim=0)
     labels_tensor = torch.cat(all_labels, dim=0)
-    suffix = f"{prefix}" + (f"_epoch{epoch}" if epoch is not None else "")
 
-    # Salvar
-    torch.save(embeddings_tensor, os.path.join(embedding_dir, f"dgcnn_embeddings_{suffix}.pt"))
-    torch.save(labels_tensor, os.path.join(embedding_dir, f"{suffix}_labels.pt"))
-    print(f"[save_embeddings] Embeddings shape: {embeddings_tensor.shape}")
-    print(f"[save_embeddings] Labels saved.")
-    print(f"[save_embeddings] Classifier type: {classifier_type}")
+    # Salva os resultados
+    torch.save(dgcnn_tensor, os.path.join(embedding_dir, f"dgcnn_embeddings_{prefix}.pt"))
+    torch.save(labels_tensor, os.path.join(embedding_dir, f"{prefix}_labels.pt"))
+    torch.save(vgg_feat_tensor, os.path.join(prediction_dir, f"{classifier_type}_features_{prefix}.pt"))
+    torch.save(pred_tensor, os.path.join(prediction_dir, f"{classifier_type}_predictions_{prefix}.pt"))
 
-    if all_predictions:
-        predictions_tensor = torch.cat(all_predictions, dim=0)
-        pred_filename = f"{classifier_type}_predictions_{suffix}.pt"
-        torch.save(predictions_tensor, os.path.join(embedding_dir, pred_filename))
-        print(f"[save_embeddings] {classifier_type.upper()} predictions saved.")
-
-    print("[save_embeddings] Done.")
-
+    print(f"[save_embeddings] ✅ Saved: {prefix}")
 
 
 
@@ -473,6 +454,11 @@ def adjust_to_vgg(samples):
 def format_hidden_dim(hd):
         return '-'.join(map(str, hd)) if isinstance(hd, list) else str(hd)
 
+def focal_loss(outputs, targets, weight=None, alpha=0.5, gamma=2.0):
+    one_hot = F.one_hot(targets, num_classes=2).float()
+    return sigmoid_focal_loss(outputs, one_hot, alpha=alpha, gamma=gamma, reduction="mean")
+
+
 
 # Preprocessing and basic stats
 df['label'] = df['label'].astype(int)
@@ -510,24 +496,14 @@ train_labels = trainset[:, 1].astype(int)
 
 if AUTO_WEIGHTING:
     class_counts = np.bincount(train_labels)
-    class_weights = [len(train_labels) / class_counts[i] for i in range(len(class_counts))]
+    total = sum(class_counts)
+    class_weights = [total / (2 * class_counts[i]) for i in range(len(class_counts))]
     CEL_weight = class_weights  # [w_non_vuln, w_vuln]
     sample_weight_value = class_counts[0] / class_counts[1]
     print(f"[INFO] Auto-weighting: {CEL_weight}, sample_weight_value: {sample_weight_value}")
 else:
     class_weights = CEL_weight  # já definido no topo
-
-if not USE_CLASS_WEIGHT:
-    sample_weights = 1 + train_labels * sample_weight_value
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
-    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
-    print(f"[INFO] Using manual sample weights: {sample_weights[:10]}... (first 10 samples)")
-else:
-    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, shuffle=True)
-
-
-sample_weights = 1 + train_labels * sample_weight_value
-
+    sample_weight_value = sample_weight_value  # não usado se USE_CLASS_WEIGHT=True
 
 ###########################################################
 
@@ -613,15 +589,49 @@ print("len(trainset):", len(trainset))
 
 ###########################################################
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+weight = torch.tensor(CEL_weight, dtype=torch.float, device=device)
 
-sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
-data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
+### Data balacing and DataLoader setup
+if USE_BOTH_WEIGHTING:
+    sample_weights = 1 + train_labels * sample_weight_value
+    sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
+    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
+
+    if USE_FOCAL_LOSS:
+        loss_func = lambda outputs, targets: focal_loss(outputs, targets, weight)
+        print(f"[INFO] Using BOTH sample weights and Focal Loss: {CEL_weight}, sample_weights: {sample_weights[:10]}...")
+    else:
+        loss_func = nn.CrossEntropyLoss(weight=weight)
+        print(f"[INFO] Using BOTH sample weights (sampler) and class weights (loss): {CEL_weight}, sample_weights: {sample_weights[:10]}...")
+
+elif not USE_CLASS_WEIGHT:
+    sample_weights = 1 + train_labels * sample_weight_value
+    sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
+    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
+
+    if USE_FOCAL_LOSS:
+        loss_func = lambda outputs, targets: focal_loss(outputs, targets, None)
+        print(f"[INFO] Using ONLY sample weights and Focal Loss: {sample_weights[:10]}...")
+    else:
+        loss_func = nn.CrossEntropyLoss()
+        print(f"[INFO] Using ONLY sample weights (sampler): {sample_weights[:10]}...")
+
+else:
+    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, shuffle=True)
+
+    if USE_FOCAL_LOSS:
+        loss_func = lambda outputs, targets: focal_loss(outputs, targets, weight)
+        print(f"[INFO] Using ONLY class weights and Focal Loss: {CEL_weight}")
+    else:
+        loss_func = nn.CrossEntropyLoss(weight=weight)
+        print(f"[INFO] Using ONLY class weights (loss): {CEL_weight}")
+
+
 
 # (Opcional) debug para garantir que as proporções estão corretas
 print(f"[DEBUG] Trainset: {sum(train_labels)} vulnerable / {len(train_labels)} total")
 print(f"[DEBUG] Testset:  {sum(testset[:,1])} vulnerable / {len(testset)} total")
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Initialize modules explicitly (modular setup)
 if classifier_type == "vgg":
@@ -653,24 +663,34 @@ params_dict = {
     "num_epochs": num_epochs,
     "undersampling_method": UNDERSAMPLING_METHOD or "None",
     "undersampling_ratio": UNDERSAMPLING_STRAT,
+    
+    # Weighting strategy
     "auto_weighting": AUTO_WEIGHTING,
     "use_class_weight": USE_CLASS_WEIGHT,
-    "auto_CEL_weight": CEL_weight,
-    "auto_sample_weight_value": sample_weight_value,
+    "use_both_weighting": USE_BOTH_WEIGHTING,
     "CEL_weight": CEL_weight,
     "sample_weight_value": sample_weight_value,
+
+    # Focal Loss
+    "use_focal_loss": USE_FOCAL_LOSS,
+    "focal_alpha": alpha,
+    "focal_gamma": gamma,
+
+    # Model architecture
     "model": model_name,
+    "classifier_type": classifier_type,
     "k_sortpooling": k_sortpooling,
     "heads": heads,
     "dropout_rate": dropout_rate,
-    "conv2dChannelParam": conv2dChannelParam,
+    "conv2dChannelParam": conv2dChannelParam if classifier_type == "vgg" else "N/A",
+
+    # Autoencoder
     "USE_AUTOENCODER": USE_AUTOENCODER,
     "AUTOENCODER_EPOCHS": AUTOENCODER_EPOCHS,
-    "FREEZE_ENCODER": FREEZE_ENCODER,
-    "classifier_type": classifier_type
+    "FREEZE_ENCODER": FREEZE_ENCODER
 }
 
-# Directory and artifacts setup
+
 artifact_suffix = (
     f"{dataset_name}"
     f"_hd-{format_hidden_dim(hidden_dimension)}"
@@ -678,17 +698,30 @@ artifact_suffix = (
     f"_clf-{classifier_type}"
     f"_ep{num_epochs}"
     f"_us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}"
-    f"_cw-{int(CEL_weight[0])}-{int(CEL_weight[1])}"
-    f"_swv{round(sample_weight_value, 2)}"
+)
+
+# Estratégia de balanceamento
+if USE_BOTH_WEIGHTING:
+    artifact_suffix += f"_wboth_cw-{int(CEL_weight[0])}-{int(CEL_weight[1])}_swv{round(sample_weight_value, 2)}"
+elif USE_CLASS_WEIGHT:
+    artifact_suffix += f"_wcw-{int(CEL_weight[0])}-{int(CEL_weight[1])}"
+else:
+    artifact_suffix += f"_wsw_swv{round(sample_weight_value, 2)}"
+
+# Focal loss
+if USE_FOCAL_LOSS:
+    artifact_suffix += f"_focal-a{alpha}-g{gamma}"
+
+# Componentes da arquitetura
+artifact_suffix += (
     f"_k{k_sortpooling}"
     f"_dr{dropout_rate}"
-    f"_c2d{conv2dChannelParam}"
-    f"_ae{int(USE_AUTOENCODER)}"
 )
 
 if classifier_type == "vgg":
     artifact_suffix += f"_c2d{conv2dChannelParam}"
 
+# Autoencoder
 artifact_suffix += (
     f"_ae{int(USE_AUTOENCODER)}"
     f"-aep{AUTOENCODER_EPOCHS}-fz{int(FREEZE_ENCODER)}" if USE_AUTOENCODER else "_noae"
@@ -739,8 +772,8 @@ else:
 
 optimizer = optim.Adam(trainable_params, lr=learning_rate)
 
-weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
-loss_func = nn.CrossEntropyLoss(weight=weight)
+#weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
+#loss_func = nn.CrossEntropyLoss(weight=weight)
 
 # Training phase
 encoder.train()
@@ -750,18 +783,20 @@ classifier_model.train()
 
 stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
 
+# Antes do treino
 save_embeddings(
     encoder=encoder,
     dataset=testset,
     device=device,
     embedding_dir=embedding_dir,
-    prefix="before_training",
-    epoch=num_epochs,
+    prediction_dir=prediction_dir,
+    prefix="test_before",
     batch_size=batch_size,
     classifier_type=classifier_type,
     vgg_adapter=vgg_adapter_arg,
     classifier_model=classifier_model_arg
 )
+
 
 print("\n========= Starting Training Phase ==========")
 for epoch in range(num_epochs):
@@ -812,8 +847,8 @@ save_embeddings(
     dataset=testset,
     device=device,
     embedding_dir=embedding_dir,
-    prefix="after_training",
-    epoch=num_epochs,
+    prediction_dir=prediction_dir,
+    prefix="test_after",
     batch_size=batch_size,
     classifier_type=classifier_type,
     vgg_adapter=vgg_adapter_arg,
