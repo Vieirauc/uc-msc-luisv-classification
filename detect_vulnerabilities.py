@@ -142,6 +142,8 @@ class DGCNNEncoder(nn.Module):
         batched_graph = dgl.batch(graphs)
         h_all = torch.cat(batch_node_features, dim=0)
 
+        #print(f"[INFO] DGCNNEncoder output shape: {h_all.shape}")
+
         if return_node_embeddings:
             return h_all, batched_graph
 
@@ -237,6 +239,7 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
 
     opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=learning_rate_ae)
     loss_func = nn.MSELoss()
+
 
     epoch_losses = []
 
