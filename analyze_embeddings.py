@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.decomposition import PCA
+from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
@@ -38,7 +39,7 @@ def load_data(prefix):
            predictions.numpy(), \
            labels.numpy()
 
-def analyze_epoch(mode, prefix, view="predictions", run_random_forest=False):
+def analyze_epoch(mode, prefix, view="predictions", run_random_forest=False, run_svm=False):
     """
     mode: "before" ou "after"
     prefix: prefixo usado nos ficheiros
@@ -107,28 +108,46 @@ def analyze_epoch(mode, prefix, view="predictions", run_random_forest=False):
     plt.close()
 
 
-    # Optional Random Forest
-    if run_random_forest:
-        print("[INFO] Running Random Forest classifier on embeddings...")
+  # Optional Conventional Classifiers
+    if run_random_forest or run_svm:
+        print("[INFO] Running conventional classifier(s) on embeddings...")
         pca_full = PCA(n_components=20).fit_transform(dgcnn_np)
         X_train, X_test, y_train, y_test = train_test_split(pca_full, labels_np, test_size=0.3, random_state=42)
-        clf = RandomForestClassifier(n_estimators=100)
-        clf.fit(X_train, y_train)
-        y_pred = clf.predict(X_test)
 
-        report = classification_report(y_test, y_pred, output_dict=True)
-        pd.DataFrame(report).transpose().to_csv(os.path.join(output_dir, f"classification_report_rf_{prefix}.csv"))
+        if run_random_forest:
+            clf_rf = RandomForestClassifier(n_estimators=100)
+            clf_rf.fit(X_train, y_train)
+            y_pred_rf = clf_rf.predict(X_test)
 
-        cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
-        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["0", "1"])
-        disp.plot()
-        plt.title(f"Random Forest Confusion Matrix ({mode})")
-        plt.savefig(os.path.join(output_dir, f"confusion_matrix_rf_{prefix}.png"))
-        plt.close()
+            report_rf = classification_report(y_test, y_pred_rf, output_dict=True)
+            pd.DataFrame(report_rf).transpose().to_csv(os.path.join(output_dir, f"classification_report_rf_{prefix}.csv"))
+
+            cm_rf = confusion_matrix(y_test, y_pred_rf, labels=[0, 1])
+            disp_rf = ConfusionMatrixDisplay(confusion_matrix=cm_rf, display_labels=["0", "1"])
+            disp_rf.plot()
+            plt.title(f"Random Forest Confusion Matrix ({mode})")
+            plt.savefig(os.path.join(output_dir, f"confusion_matrix_rf_{prefix}.png"))
+            plt.close()
+
+        if run_svm:
+            clf_svm = SVC(kernel='rbf', probability=True)
+            clf_svm.fit(X_train, y_train)
+            y_pred_svm = clf_svm.predict(X_test)
+
+            report_svm = classification_report(y_test, y_pred_svm, output_dict=True)
+            pd.DataFrame(report_svm).transpose().to_csv(os.path.join(output_dir, f"classification_report_svm_{prefix}.csv"))
+
+            cm_svm = confusion_matrix(y_test, y_pred_svm, labels=[0, 1])
+            disp_svm = ConfusionMatrixDisplay(confusion_matrix=cm_svm, display_labels=["0", "1"])
+            disp_svm.plot()
+            plt.title(f"SVM Confusion Matrix ({mode})")
+            plt.savefig(os.path.join(output_dir, f"confusion_matrix_svm_{prefix}.png"))
+            plt.close()
 
 
 # Analisar antes e depois com as duas visões
 for mode, prefix in MODES.items():
-    analyze_epoch(mode=mode, prefix=prefix, view="labels")       # Ground-truth
-    analyze_epoch(mode=mode, prefix=prefix, view="predictions")  # TP/FP/TN/FN
+    analyze_epoch(mode=mode, prefix=prefix, view="labels")
+    analyze_epoch(mode=mode, prefix=prefix, view="predictions", run_random_forest=True, run_svm=True)
+
 

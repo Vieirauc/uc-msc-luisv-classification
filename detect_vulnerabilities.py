@@ -210,7 +210,7 @@ class DGCNNConv1DClassifier(nn.Module):
             nn.Flatten(),  # (B, 32, L2) → (B, 32*L2)
             nn.Linear(32 * L2, 64),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(dropout_rate),
             nn.Linear(64, num_classes)
         )
 
@@ -659,9 +659,7 @@ else:
 vgg_adapter_arg = vgg_adapter if classifier_type == "vgg" else None
 classifier_model_arg = classifier_model if classifier_type in ["vgg", "conv1d"] else None
 
-# Model name simplification
-model_name = "GAT4_sortpool20V2"
-
+# Hyperparameters dict clearly documented
 # Hyperparameters dict clearly documented
 params_dict = {
     "dataset_name": dataset_name,
@@ -670,7 +668,7 @@ params_dict = {
     "num_epochs": num_epochs,
     "undersampling_method": UNDERSAMPLING_METHOD or "None",
     "undersampling_ratio": UNDERSAMPLING_STRAT,
-    
+
     # Weighting strategy
     "auto_weighting": AUTO_WEIGHTING,
     "use_class_weight": USE_CLASS_WEIGHT,
@@ -684,7 +682,6 @@ params_dict = {
     "focal_gamma": gamma,
 
     # Model architecture
-    "model": model_name,
     "classifier_type": classifier_type,
     "k_sortpooling": k_sortpooling,
     "heads": heads,
@@ -694,8 +691,13 @@ params_dict = {
     # Autoencoder
     "USE_AUTOENCODER": USE_AUTOENCODER,
     "AUTOENCODER_EPOCHS": AUTOENCODER_EPOCHS,
-    "FREEZE_ENCODER": FREEZE_ENCODER
+    "FREEZE_ENCODER": FREEZE_ENCODER,
+
+    # Learning rates
+    "learning_rate_ae": learning_rate_ae,
+    "learning_rate_classifier": learning_rate
 }
+
 
 
 artifact_suffix = (
