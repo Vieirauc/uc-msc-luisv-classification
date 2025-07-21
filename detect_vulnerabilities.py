@@ -8,6 +8,7 @@ import sys
 import dgl
 import torch
 import json
+import contextlib
 from torch.utils.data import DataLoader, WeightedRandomSampler
 import torch.optim as optim
 from dgl.nn import SortPooling
@@ -18,6 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import seaborn as sns
+from datetime import datetime
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
@@ -81,7 +83,7 @@ USE_AUTOENCODER = False
 NUM_NODES = 55  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
-AUTOENCODER_EPOCHS = 10
+AUTOENCODER_EPOCHS = 2
 
 classifier_type = "vgg"  # ou "vgg" ou "conv1d"
 
@@ -93,14 +95,14 @@ k_sortpooling = 16 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 
-num_epochs = 15 #2000 #500 # 1000
+num_epochs = 2 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
 elif graph_type == 'ast':
-    num_features = 6
+    num_features = 8
 elif graph_type == 'pdg':
-    num_features = 4
+    num_features = 7
 else:
     raise ValueError(f"Unsupported graph_type: {graph_type}")
 
@@ -462,7 +464,6 @@ def focal_loss(outputs, targets, weight=None, alpha=0.5, gamma=2.0):
     return sigmoid_focal_loss(outputs, one_hot, alpha=alpha, gamma=gamma, reduction="mean")
 
 
-
 # Preprocessing and basic stats
 df['label'] = df['label'].astype(int)
 df['sample_weight'] = 1 + df['label'] * sample_weight_value
@@ -740,165 +741,178 @@ stats_dir = os.path.join(run_output_dir, "stats")
 for directory in [embedding_dir, prediction_dir, stats_dir]:
     os.makedirs(directory, exist_ok=True)
 
-if USE_AUTOENCODER:
-    decoder = GraphDecoder(
-        embedding_dim=hidden_dimension[-1],  # ← novo: só a última camada do encoder
-        num_nodes=NUM_NODES,
-        feature_dim=num_features
-    ).to(device)
+log_file_path = os.path.join(run_output_dir, "log.txt")
+os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+log_file = open(log_file_path, "w")
 
-    print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
-    train_autoencoder(
+@contextlib.contextmanager
+def log_to_file():
+    with contextlib.redirect_stdout(log_file), contextlib.redirect_stderr(log_file):
+        yield
+
+with log_to_file():
+    if USE_AUTOENCODER:
+        decoder = GraphDecoder(
+            embedding_dim=hidden_dimension[-1],  # ← novo: só a última camada do encoder
+            num_nodes=NUM_NODES,
+            feature_dim=num_features
+        ).to(device)
+
+        print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
+        train_autoencoder(
+            encoder=encoder,
+            decoder=decoder,
+            data_loader=data_loader,
+            device=device,
+            num_nodes=NUM_NODES,
+            feature_dim=num_features,
+            num_epochs=AUTOENCODER_EPOCHS,
+            stats_dir=stats_dir
+        )
+        print("[INFO] Autoencoder training completed.\n")
+
+        if FREEZE_ENCODER:
+            for param in encoder.parameters():
+                param.requires_grad = False
+
+
+    # Optimizer setup
+    trainable_params = list(filter(lambda p: p.requires_grad, encoder.parameters()))
+    if classifier_type == "vgg":
+        trainable_params += list(vgg_adapter.parameters()) + list(classifier_model.parameters())
+    else:
+        trainable_params += list(classifier_model.parameters())
+
+    optimizer = optim.Adam(trainable_params, lr=learning_rate)
+
+    #weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
+    #loss_func = nn.CrossEntropyLoss(weight=weight)
+
+    # Training phase
+    encoder.train()
+    if classifier_type == "vgg":
+        vgg_adapter.train()
+    classifier_model.train()
+
+    stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
+
+    # Antes do treino
+    save_embeddings(
         encoder=encoder,
-        decoder=decoder,
-        data_loader=data_loader,
+        dataset=testset,
         device=device,
-        num_nodes=NUM_NODES,
-        feature_dim=num_features,
-        num_epochs=AUTOENCODER_EPOCHS,
-        stats_dir=stats_dir
+        embedding_dir=embedding_dir,
+        prediction_dir=prediction_dir,
+        prefix="test_before",
+        batch_size=batch_size,
+        classifier_type=classifier_type,
+        vgg_adapter=vgg_adapter_arg,
+        classifier_model=classifier_model_arg
     )
-    print("[INFO] Autoencoder training completed.\n")
-
-    if FREEZE_ENCODER:
-        for param in encoder.parameters():
-            param.requires_grad = False
 
 
+    print("\n========= Starting Training Phase ==========")
+    train_start = time.time()
+    for epoch in range(num_epochs):
+        total_loss, correct, total = 0, 0, 0
 
-# Optimizer setup
-trainable_params = list(filter(lambda p: p.requires_grad, encoder.parameters()))
-if classifier_type == "vgg":
-    trainable_params += list(vgg_adapter.parameters()) + list(classifier_model.parameters())
-else:
-    trainable_params += list(classifier_model.parameters())
+        for graphs, labels in data_loader:
+            graphs = [g.to(device) for g in graphs]
+            labels = labels.to(device)
 
-optimizer = optim.Adam(trainable_params, lr=learning_rate)
+            embeddings = encoder(graphs)
+            if classifier_type == "vgg":
+                batched_graph = embeddings  # returned from encoder when use_sortpool=False
+                vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
+                predictions = classifier_model(vgg_input)
+            else:
+                predictions = classifier_model(embeddings)
 
-#weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
-#loss_func = nn.CrossEntropyLoss(weight=weight)
+            loss = loss_func(predictions, labels)
 
-# Training phase
-encoder.train()
-if classifier_type == "vgg":
-    vgg_adapter.train()
-classifier_model.train()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
+            total_loss += loss.item()
+            correct += (predictions.argmax(dim=1) == labels).sum().item()
+            total += labels.size(0)
 
-# Antes do treino
-save_embeddings(
-    encoder=encoder,
-    dataset=testset,
-    device=device,
-    embedding_dir=embedding_dir,
-    prediction_dir=prediction_dir,
-    prefix="test_before",
-    batch_size=batch_size,
-    classifier_type=classifier_type,
-    vgg_adapter=vgg_adapter_arg,
-    classifier_model=classifier_model_arg
-)
+        epoch_loss = total_loss / len(data_loader)
+        accuracy = correct / total
 
+        stats_dict['epoch'].append(epoch)
+        stats_dict['loss'].append(epoch_loss)
+        stats_dict['accuracy'].append(accuracy)
 
-print("\n========= Starting Training Phase ==========")
-for epoch in range(num_epochs):
-    total_loss, correct, total = 0, 0, 0
+        print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
 
-    for graphs, labels in data_loader:
-        graphs = [g.to(device) for g in graphs]
-        labels = labels.to(device)
+    train_end = time.time()
+    print(f"[INFO] Training completed in {(train_end - train_start):.2f} seconds.\n")
 
-        embeddings = encoder(graphs)
-        if classifier_type == "vgg":
-            batched_graph = embeddings  # returned from encoder when use_sortpool=False
-            vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
-            predictions = classifier_model(vgg_input)
-        else:
-            predictions = classifier_model(embeddings)
+    # Save stats clearly
+    df_stats = pd.DataFrame(stats_dict).set_index('epoch')
+    df_stats.plot(figsize=(8, 5))
+    plt.xlabel('Epoch')
+    plt.title('Training Loss and Accuracy')
+    plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
+    plt.close()
 
-        loss = loss_func(predictions, labels)
+    save_embeddings(
+        encoder=encoder,
+        dataset=testset,
+        device=device,
+        embedding_dir=embedding_dir,
+        prediction_dir=prediction_dir,
+        prefix="test_after",
+        batch_size=batch_size,
+        classifier_type=classifier_type,
+        vgg_adapter=vgg_adapter_arg,
+        classifier_model=classifier_model_arg
+    )
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    # Evaluation Phase
+    encoder.eval()
+    if classifier_type == "vgg":
+        vgg_adapter.eval()
+    classifier_model.eval()
 
-        total_loss += loss.item()
-        correct += (predictions.argmax(dim=1) == labels).sum().item()
-        total += labels.size(0)
+    print("\n========= Starting Evaluation Phase =========")
+    all_preds, all_labels = [], []
 
-    epoch_loss = total_loss / len(data_loader)
-    accuracy = correct / total
+    with torch.no_grad():
+        for graphs, labels in DataLoader(testset, batch_size=batch_size, collate_fn=collate):
+            graphs = [g.to(device) for g in graphs]
+            labels = labels.cpu().numpy()
 
-    stats_dict['epoch'].append(epoch)
-    stats_dict['loss'].append(epoch_loss)
-    stats_dict['accuracy'].append(accuracy)
+            embeddings = encoder(graphs)
+            if classifier_type == "vgg":
+                batched_graph = embeddings  # encoder returned the batched graph
+                vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
+                preds = classifier_model(vgg_input).argmax(dim=1).cpu().numpy()
+            else:
+                preds = classifier_model(embeddings).argmax(dim=1).cpu().numpy()
 
-    print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
+            all_preds.extend(preds)
+            all_labels.extend(labels)
 
+    # Metrics & Confusion Matrix
+    classification_df = pd.DataFrame(classification_report(all_labels, all_preds, output_dict=True, zero_division=0)).transpose()
+    classification_df.to_csv(os.path.join(stats_dir, "classification_report.csv"))
 
-# Save stats clearly
-df_stats = pd.DataFrame(stats_dict).set_index('epoch')
-df_stats.plot(figsize=(8, 5))
-plt.xlabel('Epoch')
-plt.title('Training Loss and Accuracy')
-plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
-plt.close()
+    cm = confusion_matrix(all_labels, all_preds)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
+    disp.plot()
+    plt.savefig(os.path.join(stats_dir, "confusion_matrix.png"))
+    plt.close()
 
-save_embeddings(
-    encoder=encoder,
-    dataset=testset,
-    device=device,
-    embedding_dir=embedding_dir,
-    prediction_dir=prediction_dir,
-    prefix="test_after",
-    batch_size=batch_size,
-    classifier_type=classifier_type,
-    vgg_adapter=vgg_adapter_arg,
-    classifier_model=classifier_model_arg
-)
+    print("\n[CONFUSION MATRIX]")
+    print(cm)
 
-# Evaluation Phase
-encoder.eval()
-if classifier_type == "vgg":
-    vgg_adapter.eval()
-classifier_model.eval()
+    # Optional: Also print the full classification report
+    print("\n[CLASSIFICATION REPORT]")
+    print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
 
-print("\n========= Starting Evaluation Phase =========")
-all_preds, all_labels = [], []
-
-with torch.no_grad():
-    for graphs, labels in DataLoader(testset, batch_size=batch_size, collate_fn=collate):
-        graphs = [g.to(device) for g in graphs]
-        labels = labels.cpu().numpy()
-
-        embeddings = encoder(graphs)
-        if classifier_type == "vgg":
-            batched_graph = embeddings  # encoder returned the batched graph
-            vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
-            preds = classifier_model(vgg_input).argmax(dim=1).cpu().numpy()
-        else:
-            preds = classifier_model(embeddings).argmax(dim=1).cpu().numpy()
-
-        all_preds.extend(preds)
-        all_labels.extend(labels)
-
-# Metrics & Confusion Matrix
-classification_df = pd.DataFrame(classification_report(all_labels, all_preds, output_dict=True, zero_division=0)).transpose()
-classification_df.to_csv(os.path.join(stats_dir, "classification_report.csv"))
-
-cm = confusion_matrix(all_labels, all_preds)
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
-disp.plot()
-plt.savefig(os.path.join(stats_dir, "confusion_matrix.png"))
-plt.close()
-
-print("\n[CONFUSION MATRIX]")
-print(cm)
-
-# Optional: Also print the full classification report
-print("\n[CLASSIFICATION REPORT]")
-print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
-
-# Log hyperparameters
-log_hyperparameters(run_output_dir, params_dict)
+    # Log hyperparameters
+    log_hyperparameters(run_output_dir, params_dict)
+    log_file.close()
