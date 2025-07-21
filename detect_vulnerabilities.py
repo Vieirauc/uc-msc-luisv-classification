@@ -57,6 +57,7 @@ else:
 # %%
 
 DEBUG = False
+SAVE_EMBEDDINGS = False
 
 ZNORM = "znorm"
 MINMAX = "minmax"
@@ -797,18 +798,21 @@ with log_to_file():
     stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
 
     # Antes do treino
-    save_embeddings(
-        encoder=encoder,
-        dataset=testset,
-        device=device,
-        embedding_dir=embedding_dir,
-        prediction_dir=prediction_dir,
-        prefix="test_before",
-        batch_size=batch_size,
-        classifier_type=classifier_type,
-        vgg_adapter=vgg_adapter_arg,
-        classifier_model=classifier_model_arg
-    )
+    if SAVE_EMBEDDINGS:
+        save_embeddings(
+            encoder=encoder,
+            dataset=testset,
+            device=device,
+            embedding_dir=embedding_dir,
+            prediction_dir=prediction_dir,
+            prefix="test_before",
+            batch_size=batch_size,
+            classifier_type=classifier_type,
+            vgg_adapter=vgg_adapter_arg,
+            classifier_model=classifier_model_arg
+        )
+    else:
+        print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
 
 
     print("\n========= Starting Training Phase ==========")
@@ -858,18 +862,21 @@ with log_to_file():
     plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
     plt.close()
 
-    save_embeddings(
-        encoder=encoder,
-        dataset=testset,
-        device=device,
-        embedding_dir=embedding_dir,
-        prediction_dir=prediction_dir,
-        prefix="test_after",
-        batch_size=batch_size,
-        classifier_type=classifier_type,
-        vgg_adapter=vgg_adapter_arg,
-        classifier_model=classifier_model_arg
-    )
+    if SAVE_EMBEDDINGS:
+        save_embeddings(
+            encoder=encoder,
+            dataset=testset,
+            device=device,
+            embedding_dir=embedding_dir,
+            prediction_dir=prediction_dir,
+            prefix="test_after",
+            batch_size=batch_size,
+            classifier_type=classifier_type,
+            vgg_adapter=vgg_adapter_arg,
+            classifier_model=classifier_model_arg
+        )
+    else:
+        print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
 
     # Evaluation Phase
     encoder.eval()
