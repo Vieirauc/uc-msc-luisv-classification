@@ -34,7 +34,7 @@ from detect_vulnerabilities_vgg import VGGnet
 
 project = 'linux' # 'gecko-dev'#'linux'
 version = None # 'v0.5_filtered'
-graph_type = 'cfg' #
+graph_type = 'pdg' #
 
 #cfg-dataset-linux-v0.5 has 101513 entries
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
@@ -45,7 +45,9 @@ graph_type = 'cfg' #
 #    dataset_name = f"{graph_type}-dataset-{project}"
 
 #dataset_name = 'cfg-dataset-linux-v0.5_filtered'
-dataset_name = 'cfg-dataset-linux-sample1k'
+#dataset_name = 'cfg-dataset-linux-sample1k'
+dataset_name = 'pdg-dataset-linux_undersampled10k'
+
 dataset_path = 'datasets/'
 
 if not os.path.isfile(dataset_path + dataset_name + '.pkl'):
@@ -74,14 +76,14 @@ USE_FOCAL_LOSS = False
 alpha = 0.5
 gamma = 2.0
 
-AUTO_WEIGHTING = True
-USE_CLASS_WEIGHT = True
+AUTO_WEIGHTING = False
+USE_CLASS_WEIGHT = False
 USE_BOTH_WEIGHTING = False  # ⚠️ só para testes controlados
 sample_weight_value = 1
-CEL_weight = [1,2]
+CEL_weight = [1,1]
 
-USE_AUTOENCODER = False
-NUM_NODES = 55  # padding fixo
+USE_AUTOENCODER = True
+NUM_NODES = 199  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 2
@@ -92,11 +94,11 @@ classifier_type = "vgg"  # ou "vgg" ou "conv1d"
 heads = 4 # 2
 hidden_dimension = [32, 32, 32, 32] 
 batch_size = 10
-k_sortpooling = 16 #24 #16
+k_sortpooling = 128 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
-learning_rate = 0.0005 #0.0001 #0.00001 #0.000001 
-num_epochs = 2 #2000 #500 # 1000
+learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
+num_epochs = 15 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
@@ -851,6 +853,7 @@ plt.xlabel('Epoch')
 plt.title('Training Loss and Accuracy')
 plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
 plt.close()
+df_stats.to_csv(os.path.join(stats_dir, "training_stats.csv"))
 
 if SAVE_EMBEDDINGS:
     save_embeddings(
