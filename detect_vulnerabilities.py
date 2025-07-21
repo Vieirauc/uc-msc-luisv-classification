@@ -742,184 +742,173 @@ stats_dir = os.path.join(run_output_dir, "stats")
 for directory in [embedding_dir, prediction_dir, stats_dir]:
     os.makedirs(directory, exist_ok=True)
 
-log_file_path = os.path.join(run_output_dir, "log.txt")
-os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
-log_file = open(log_file_path, "w")
+if USE_AUTOENCODER:
+    decoder = GraphDecoder(
+        embedding_dim=hidden_dimension[-1],  # ← novo: só a última camada do encoder
+        num_nodes=NUM_NODES,
+        feature_dim=num_features
+    ).to(device)
 
-@contextlib.contextmanager
-def log_to_file():
-    with contextlib.redirect_stdout(log_file), contextlib.redirect_stderr(log_file):
-        yield
+    print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
+    train_autoencoder(
+        encoder=encoder,
+        decoder=decoder,
+        data_loader=data_loader,
+        device=device,
+        num_nodes=NUM_NODES,
+        feature_dim=num_features,
+        num_epochs=AUTOENCODER_EPOCHS,
+        stats_dir=stats_dir
+    )
+    print("[INFO] Autoencoder training completed.\n")
 
-with log_to_file():
-    if USE_AUTOENCODER:
-        decoder = GraphDecoder(
-            embedding_dim=hidden_dimension[-1],  # ← novo: só a última camada do encoder
-            num_nodes=NUM_NODES,
-            feature_dim=num_features
-        ).to(device)
-
-        print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
-        train_autoencoder(
-            encoder=encoder,
-            decoder=decoder,
-            data_loader=data_loader,
-            device=device,
-            num_nodes=NUM_NODES,
-            feature_dim=num_features,
-            num_epochs=AUTOENCODER_EPOCHS,
-            stats_dir=stats_dir
-        )
-        print("[INFO] Autoencoder training completed.\n")
-
-        if FREEZE_ENCODER:
-            for param in encoder.parameters():
-                param.requires_grad = False
+    if FREEZE_ENCODER:
+        for param in encoder.parameters():
+            param.requires_grad = False
 
 
-    # Optimizer setup
-    trainable_params = list(filter(lambda p: p.requires_grad, encoder.parameters()))
-    if classifier_type == "vgg":
-        trainable_params += list(vgg_adapter.parameters()) + list(classifier_model.parameters())
-    else:
-        trainable_params += list(classifier_model.parameters())
+# Optimizer setup
+trainable_params = list(filter(lambda p: p.requires_grad, encoder.parameters()))
+if classifier_type == "vgg":
+    trainable_params += list(vgg_adapter.parameters()) + list(classifier_model.parameters())
+else:
+    trainable_params += list(classifier_model.parameters())
 
-    optimizer = optim.Adam(trainable_params, lr=learning_rate)
+optimizer = optim.Adam(trainable_params, lr=learning_rate)
 
-    #weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
-    #loss_func = nn.CrossEntropyLoss(weight=weight)
+#weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
+#loss_func = nn.CrossEntropyLoss(weight=weight)
 
-    # Training phase
-    encoder.train()
-    if classifier_type == "vgg":
-        vgg_adapter.train()
-    classifier_model.train()
+# Training phase
+encoder.train()
+if classifier_type == "vgg":
+    vgg_adapter.train()
+classifier_model.train()
 
-    stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
+stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
 
-    # Antes do treino
-    if SAVE_EMBEDDINGS:
-        save_embeddings(
-            encoder=encoder,
-            dataset=testset,
-            device=device,
-            embedding_dir=embedding_dir,
-            prediction_dir=prediction_dir,
-            prefix="test_before",
-            batch_size=batch_size,
-            classifier_type=classifier_type,
-            vgg_adapter=vgg_adapter_arg,
-            classifier_model=classifier_model_arg
-        )
-    else:
-        print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
+# Antes do treino
+if SAVE_EMBEDDINGS:
+    save_embeddings(
+        encoder=encoder,
+        dataset=testset,
+        device=device,
+        embedding_dir=embedding_dir,
+        prediction_dir=prediction_dir,
+        prefix="test_before",
+        batch_size=batch_size,
+        classifier_type=classifier_type,
+        vgg_adapter=vgg_adapter_arg,
+        classifier_model=classifier_model_arg
+    )
+else:
+    print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
 
 
-    print("\n========= Starting Training Phase ==========")
-    train_start = time.time()
-    for epoch in range(num_epochs):
-        total_loss, correct, total = 0, 0, 0
+print("\n========= Starting Training Phase ==========")
+train_start = time.time()
+for epoch in range(num_epochs):
+    total_loss, correct, total = 0, 0, 0
 
-        for graphs, labels in data_loader:
-            graphs = [g.to(device) for g in graphs]
-            labels = labels.to(device)
+    for graphs, labels in data_loader:
+        graphs = [g.to(device) for g in graphs]
+        labels = labels.to(device)
 
-            embeddings = encoder(graphs)
-            if classifier_type == "vgg":
-                batched_graph = embeddings  # returned from encoder when use_sortpool=False
-                vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
-                predictions = classifier_model(vgg_input)
-            else:
-                predictions = classifier_model(embeddings)
+        embeddings = encoder(graphs)
+        if classifier_type == "vgg":
+            batched_graph = embeddings  # returned from encoder when use_sortpool=False
+            vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
+            predictions = classifier_model(vgg_input)
+        else:
+            predictions = classifier_model(embeddings)
 
-            loss = loss_func(predictions, labels)
+        loss = loss_func(predictions, labels)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-            total_loss += loss.item()
-            correct += (predictions.argmax(dim=1) == labels).sum().item()
-            total += labels.size(0)
+        total_loss += loss.item()
+        correct += (predictions.argmax(dim=1) == labels).sum().item()
+        total += labels.size(0)
 
-        epoch_loss = total_loss / len(data_loader)
-        accuracy = correct / total
+    epoch_loss = total_loss / len(data_loader)
+    accuracy = correct / total
 
-        stats_dict['epoch'].append(epoch)
-        stats_dict['loss'].append(epoch_loss)
-        stats_dict['accuracy'].append(accuracy)
+    stats_dict['epoch'].append(epoch)
+    stats_dict['loss'].append(epoch_loss)
+    stats_dict['accuracy'].append(accuracy)
 
-        print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
+    print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
 
-    train_end = time.time()
-    print(f"[INFO] Training completed in {(train_end - train_start):.2f} seconds.\n")
+train_end = time.time()
+print(f"[INFO] Training completed in {(train_end - train_start):.2f} seconds.\n")
 
-    # Save stats clearly
-    df_stats = pd.DataFrame(stats_dict).set_index('epoch')
-    df_stats.plot(figsize=(8, 5))
-    plt.xlabel('Epoch')
-    plt.title('Training Loss and Accuracy')
-    plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
-    plt.close()
+# Save stats clearly
+df_stats = pd.DataFrame(stats_dict).set_index('epoch')
+df_stats.plot(figsize=(8, 5))
+plt.xlabel('Epoch')
+plt.title('Training Loss and Accuracy')
+plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
+plt.close()
 
-    if SAVE_EMBEDDINGS:
-        save_embeddings(
-            encoder=encoder,
-            dataset=testset,
-            device=device,
-            embedding_dir=embedding_dir,
-            prediction_dir=prediction_dir,
-            prefix="test_after",
-            batch_size=batch_size,
-            classifier_type=classifier_type,
-            vgg_adapter=vgg_adapter_arg,
-            classifier_model=classifier_model_arg
-        )
-    else:
-        print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
+if SAVE_EMBEDDINGS:
+    save_embeddings(
+        encoder=encoder,
+        dataset=testset,
+        device=device,
+        embedding_dir=embedding_dir,
+        prediction_dir=prediction_dir,
+        prefix="test_after",
+        batch_size=batch_size,
+        classifier_type=classifier_type,
+        vgg_adapter=vgg_adapter_arg,
+        classifier_model=classifier_model_arg
+    )
+else:
+    print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
 
-    # Evaluation Phase
-    encoder.eval()
-    if classifier_type == "vgg":
-        vgg_adapter.eval()
-    classifier_model.eval()
+# Evaluation Phase
+encoder.eval()
+if classifier_type == "vgg":
+    vgg_adapter.eval()
+classifier_model.eval()
 
-    print("\n========= Starting Evaluation Phase =========")
-    all_preds, all_labels = [], []
+print("\n========= Starting Evaluation Phase =========")
+all_preds, all_labels = [], []
 
-    with torch.no_grad():
-        for graphs, labels in DataLoader(testset, batch_size=batch_size, collate_fn=collate):
-            graphs = [g.to(device) for g in graphs]
-            labels = labels.cpu().numpy()
+with torch.no_grad():
+    for graphs, labels in DataLoader(testset, batch_size=batch_size, collate_fn=collate):
+        graphs = [g.to(device) for g in graphs]
+        labels = labels.cpu().numpy()
 
-            embeddings = encoder(graphs)
-            if classifier_type == "vgg":
-                batched_graph = embeddings  # encoder returned the batched graph
-                vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
-                preds = classifier_model(vgg_input).argmax(dim=1).cpu().numpy()
-            else:
-                preds = classifier_model(embeddings).argmax(dim=1).cpu().numpy()
+        embeddings = encoder(graphs)
+        if classifier_type == "vgg":
+            batched_graph = embeddings  # encoder returned the batched graph
+            vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
+            preds = classifier_model(vgg_input).argmax(dim=1).cpu().numpy()
+        else:
+            preds = classifier_model(embeddings).argmax(dim=1).cpu().numpy()
 
-            all_preds.extend(preds)
-            all_labels.extend(labels)
+        all_preds.extend(preds)
+        all_labels.extend(labels)
 
-    # Metrics & Confusion Matrix
-    classification_df = pd.DataFrame(classification_report(all_labels, all_preds, output_dict=True, zero_division=0)).transpose()
-    classification_df.to_csv(os.path.join(stats_dir, "classification_report.csv"))
+# Metrics & Confusion Matrix
+classification_df = pd.DataFrame(classification_report(all_labels, all_preds, output_dict=True, zero_division=0)).transpose()
+classification_df.to_csv(os.path.join(stats_dir, "classification_report.csv"))
 
-    cm = confusion_matrix(all_labels, all_preds)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
-    disp.plot()
-    plt.savefig(os.path.join(stats_dir, "confusion_matrix.png"))
-    plt.close()
+cm = confusion_matrix(all_labels, all_preds)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
+disp.plot()
+plt.savefig(os.path.join(stats_dir, "confusion_matrix.png"))
+plt.close()
 
-    print("\n[CONFUSION MATRIX]")
-    print(cm)
+print("\n[CONFUSION MATRIX]")
+print(cm)
 
-    # Optional: Also print the full classification report
-    print("\n[CLASSIFICATION REPORT]")
-    print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
+# Optional: Also print the full classification report
+print("\n[CLASSIFICATION REPORT]")
+print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
 
-    # Log hyperparameters
-    log_hyperparameters(run_output_dir, params_dict)
-    log_file.close()
+# Log hyperparameters
+log_hyperparameters(run_output_dir, params_dict)
