@@ -82,19 +82,19 @@ USE_BOTH_WEIGHTING = False  # ⚠️ só para testes controlados
 sample_weight_value = 1
 CEL_weight = [1,1]
 
-USE_AUTOENCODER = True
+USE_AUTOENCODER = False
 NUM_NODES = 199  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 2
 
-classifier_type = "vgg"  # ou "vgg" ou "conv1d"
+classifier_type = "conv1d"  # ou "vgg" ou "conv1d"
 
 
 heads = 4 # 2
 hidden_dimension = [32, 32, 32, 32] 
 batch_size = 10
-k_sortpooling = 128 #24 #16
+k_sortpooling = 32 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
@@ -856,6 +856,12 @@ plt.title('Training Loss and Accuracy')
 plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
 plt.close()
 df_stats.to_csv(os.path.join(stats_dir, "training_stats.csv"))
+
+with open(os.path.join(stats_dir, "training_metadata.txt"), "w") as f:
+    f.write(f"Training time (seconds): {train_end - train_start:.2f}\n")
+    f.write(f"Epochs: {num_epochs}\n")
+    f.write(f"Final loss: {epoch_loss:.4f}\n")
+    f.write(f"Final accuracy: {accuracy:.4f}\n")
 
 if SAVE_EMBEDDINGS:
     save_embeddings(
