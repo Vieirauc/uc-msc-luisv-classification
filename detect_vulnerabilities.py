@@ -34,7 +34,7 @@ from detect_vulnerabilities_vgg import VGGnet
 
 project = 'linux' # 'gecko-dev'#'linux'
 version = None # 'v0.5_filtered'
-graph_type = 'pdg' #
+graph_type = 'cfg' #
 
 #cfg-dataset-linux-v0.5 has 101513 entries
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
@@ -45,8 +45,8 @@ graph_type = 'pdg' #
 #    dataset_name = f"{graph_type}-dataset-{project}"
 
 #dataset_name = 'cfg-dataset-linux-v0.5_filtered'
-#dataset_name = 'cfg-dataset-linux-sample1k'
-dataset_name = 'pdg-dataset-linux_undersampled10k'
+dataset_name = 'cfg-dataset-linux-sample1k'
+#dataset_name = 'pdg-dataset-linux_undersampled10k'
 
 dataset_path = 'datasets/'
 
@@ -76,7 +76,7 @@ USE_FOCAL_LOSS = False
 alpha = 0.5
 gamma = 2.0
 
-AUTO_WEIGHTING = False
+AUTO_WEIGHTING = True
 USE_CLASS_WEIGHT = False
 USE_BOTH_WEIGHTING = False  # ⚠️ só para testes controlados
 sample_weight_value = 1
@@ -86,7 +86,7 @@ USE_AUTOENCODER = False
 NUM_NODES = 199  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
-AUTOENCODER_EPOCHS = 2
+AUTOENCODER_EPOCHS = 50
 
 classifier_type = "conv1d"  # ou "vgg" ou "conv1d"
 
@@ -98,7 +98,7 @@ k_sortpooling = 32 #24 #16
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
-num_epochs = 15 #2000 #500 # 1000
+num_epochs = 50 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
@@ -784,7 +784,8 @@ optimizer = optim.Adam(trainable_params, lr=learning_rate)
 #loss_func = nn.CrossEntropyLoss(weight=weight)
 
 # Training phase
-encoder.train()
+if not FREEZE_ENCODER:
+    encoder.train()
 if classifier_type == "vgg":
     vgg_adapter.train()
 classifier_model.train()
@@ -909,8 +910,23 @@ classification_df = pd.DataFrame(classification_report(all_labels, all_preds, ou
 classification_df.to_csv(os.path.join(stats_dir, "classification_report.csv"))
 
 cm = confusion_matrix(all_labels, all_preds)
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
-disp.plot()
+cm_sum = np.sum(cm)
+cm_percent = cm / cm_sum * 100
+
+# Create labels with both count and percentage
+labels = np.array([
+    [f"{cm[i, j]}\n({cm_percent[i, j]:.1f}%)" for j in range(cm.shape[1])]
+    for i in range(cm.shape[0])
+])
+
+plt.figure(figsize=(6, 5))
+sns.heatmap(cm, annot=labels, fmt="", cmap="Blues", cbar=False,
+            xticklabels=["Neutral (0)", "Vulnerable (1)"],
+            yticklabels=["Neutral (0)", "Vulnerable (1)"])
+plt.xlabel("Predicted Label")
+plt.ylabel("True Label")
+plt.title("Confusion Matrix with Percentages")
+plt.tight_layout()
 plt.savefig(os.path.join(stats_dir, "confusion_matrix.png"))
 plt.close()
 
