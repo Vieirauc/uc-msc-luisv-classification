@@ -706,7 +706,6 @@ artifact_suffix = (
     f"_norm-{normalization}"
     f"_clf-{classifier_type}"
     f"_ep{num_epochs}"
-    f"_us-{UNDERSAMPLING_METHOD or '0'}-{UNDERSAMPLING_STRAT}"
 )
 
 # Estratégia de balanceamento
