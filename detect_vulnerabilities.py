@@ -46,7 +46,7 @@ graph_type = 'cfg' #
 
 #dataset_name = 'cfg-dataset-linux-v0.5_filtered'
 dataset_name = 'cfg-dataset-linux-sample1k'
-#dataset_name = 'pdg-dataset-linux_undersampled10k'
+#dataset_name = 'pdg-dataset-linux_undersampled20k'
 
 dataset_path = 'datasets/'
 
@@ -88,17 +88,18 @@ FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 50
 
-classifier_type = "conv1d"  # ou "vgg" ou "conv1d"
+classifier_type = "vgg"  # ou "vgg" ou "conv1d"
 
 
 heads = 4 # 2
 hidden_dimension = [32, 32, 32, 32] 
 batch_size = 10
-k_sortpooling = 32 #24 #16
+k_sortpooling = 32  # for SortPooling
+k_amp = 32          # for Adaptive Max Pooling (VGG pathway)
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
-num_epochs = 50 #2000 #500 # 1000
+num_epochs = 10 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
@@ -112,7 +113,7 @@ else:
 
 ##################################################################################
 class DGCNNEncoder(nn.Module):
-    def __init__(self, in_dim, hidden_dimensions, sortpooling_k=None, use_sortpool=True):
+    def __init__(self, in_dim, hidden_dimensions, k_sortpooling=None, use_sortpool=True):
         super(DGCNNEncoder, self).__init__()
 
         self.use_sortpool = use_sortpool
@@ -127,10 +128,8 @@ class DGCNNEncoder(nn.Module):
         #self.conv3 = GATConv(hidden_dimensions[1] * heads, hidden_dimensions[2], heads)
         #self.conv4 = GATConv(hidden_dimensions[2] * heads, hidden_dimensions[3], 1)
 
-        self.sortpool = SortPooling(k=sortpooling_k)
+        self.sortpool = SortPooling(k=k_sortpooling)
         self.dropout = nn.Dropout(p=dropout_rate)
-
-        self.amp_pool = nn.AdaptiveMaxPool1d(sortpooling_k)
 
     def forward(self, graphs, return_node_embeddings=False):
         batch_node_features = []
@@ -162,14 +161,14 @@ class DGCNNEncoder(nn.Module):
 
 
 class DGCNNVGGAdapter(nn.Module):
-    def __init__(self, embedding_dim, conv2d_channels=32):
+    def __init__(self, embedding_dim, conv2d_channels=32, k_amp=30):
         super(DGCNNVGGAdapter, self).__init__()
         self.conv2d = nn.Conv2d(
             in_channels=1,
             out_channels=conv2d_channels,
             kernel_size=13, stride=1, padding=6
         )
-        self.amp = nn.AdaptiveMaxPool2d((30, embedding_dim))
+        self.amp = nn.AdaptiveMaxPool2d((k_amp, embedding_dim))
 
     def forward(self, batched_graph):
         """
@@ -642,13 +641,13 @@ print(f"[DEBUG] Testset:  {sum(testset[:,1])} vulnerable / {len(testset)} total"
 
 # Initialize modules explicitly (modular setup)
 if classifier_type == "vgg":
-    encoder = DGCNNEncoder(num_features, hidden_dimension, sortpooling_k=k_sortpooling, use_sortpool=False).to(device)
+    encoder = DGCNNEncoder(num_features, hidden_dimension, k_sortpooling=k_sortpooling, use_sortpool=False).to(device)
 else:
-    encoder = DGCNNEncoder(num_features, hidden_dimension, sortpooling_k=k_sortpooling, use_sortpool=True).to(device)
+    encoder = DGCNNEncoder(num_features, hidden_dimension, k_sortpooling=k_sortpooling, use_sortpool=True).to(device)
 
 
 if classifier_type == "vgg":
-    vgg_adapter = DGCNNVGGAdapter(embedding_dim=sum(hidden_dimension), conv2d_channels=conv2dChannelParam).to(device)
+    vgg_adapter = DGCNNVGGAdapter(embedding_dim=sum(hidden_dimension), conv2d_channels=conv2dChannelParam, k_amp=k_amp).to(device)
     classifier_model = VGGnet(in_channels=conv2dChannelParam).to(device)
 elif classifier_type == "conv1d":
     classifier_model = DGCNNConv1DClassifier(input_dim=k_sortpooling * hidden_dimension[-1]).to(device)
@@ -683,6 +682,7 @@ params_dict = {
 
     # Model architecture
     "classifier_type": classifier_type,
+    "k_amp": k_amp if classifier_type == "vgg" else "N/A",
     "k_sortpooling": k_sortpooling,
     "heads": heads,
     "dropout_rate": dropout_rate,
@@ -723,9 +723,10 @@ if USE_FOCAL_LOSS:
 
 # Componentes da arquitetura
 artifact_suffix += (
-    f"_k{k_sortpooling}"
-    f"_dr{dropout_rate}"
+    f"_k{k_sortpooling}" if classifier_type == "conv1d" else ""
+    f"-ampk{k_amp}" if classifier_type == "vgg" else ""
 )
+artifact_suffix += f"_dr{dropout_rate}"
 
 if classifier_type == "vgg":
     artifact_suffix += f"_c2d{conv2dChannelParam}"
