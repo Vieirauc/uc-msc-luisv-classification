@@ -89,8 +89,7 @@ FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 50
 
-classifier_type = "vgg"  # ou "vgg" ou "conv1d"
-
+classifier_type = "conv1d"  # ou "vgg" ou "conv1d"
 
 #heads = 4
 hidden_dimension = [32, 32, 32, 32] 
