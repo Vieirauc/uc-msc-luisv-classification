@@ -91,7 +91,7 @@ AUTOENCODER_EPOCHS = 50
 classifier_type = "vgg"  # ou "vgg" ou "conv1d"
 
 
-heads = 4 # 2
+#heads = 4
 hidden_dimension = [32, 32, 32, 32] 
 batch_size = 10
 k_sortpooling = 32  # for SortPooling
@@ -312,35 +312,6 @@ def train_autoencoder(encoder, decoder, data_loader, device, num_nodes, feature_
     loss_df = pd.DataFrame({"epoch": list(range(num_epochs)), "loss": epoch_losses})
     loss_df.to_csv(os.path.join(stats_dir, "autoencoder_loss.csv"), index=False)
 
-def apply_undersampling(df, strategy=0.5, method="random", n_clusters=None):
-    if method is None:
-        if DEBUG:
-            print("No undersampling applied.")
-        return df
-
-    X = df.drop(columns=['label'])
-    y = df['label'].astype(int)
-
-    minority_count = y.sum()
-    desired_majority_count = min(
-        round((minority_count / strategy) - minority_count),
-        sum(y == 0)
-    )
-
-    sampler = {
-        "random": RandomUnderSampler,
-        "kmeans": lambda **kwargs: ClusterCentroids(
-            estimator=KMeans(n_clusters=n_clusters or 10, random_state=42), **kwargs)
-    }.get(method)
-
-    if not sampler:
-        raise ValueError(f"Unsupported method: {method}")
-
-    undersampler = sampler(sampling_strategy={0: desired_majority_count, 1: minority_count}, random_state=42)
-    X_res, y_res = undersampler.fit_resample(X, y)
-
-    return pd.concat([X_res, pd.Series(y_res, name='label')], axis=1)
-
 def collate(samples):
     graphs, labels = map(list, zip(*samples))
     return graphs, torch.tensor(labels)
@@ -476,15 +447,6 @@ print(f"  - Vulnerable: {df['label'].sum()} | Non-vulnerable: {len(df) - df['lab
 # Graph size info (for SortPooling k and decoder padding decisions)
 graph_sizes = df['size'].values
 print(f" Graph size stats — Max: {np.max(graph_sizes)}, 95th percentile: {int(np.percentile(graph_sizes, 95))}")
-
-# Apply undersampling
-df_resampled = apply_undersampling(df, strategy=UNDERSAMPLING_STRAT, method=UNDERSAMPLING_METHOD)
-
-if UNDERSAMPLING_METHOD:
-    print(f" Dataset after undersampling: {len(df_resampled)} samples")
-    print(f"  - Vulnerable: {df_resampled['label'].sum()} | Non-vulnerable: {len(df_resampled) - df_resampled['label'].sum()}")
-
-df = df_resampled
 
 # Dataset split
 trainset_df, testset_df = train_test_split(
