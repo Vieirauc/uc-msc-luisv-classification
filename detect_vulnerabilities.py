@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
 from imblearn.under_sampling import RandomUnderSampler, ClusterCentroids
@@ -58,6 +59,10 @@ else:
 
 # %%
 
+N_RUNS = 5  # ou 10, conforme precisares
+SEED_LIST = [42 + i*11 for i in range(N_RUNS)]  # Seeds diferentes, mas fixas
+
+
 DEBUG = False
 SAVE_EMBEDDINGS = False
 
@@ -68,9 +73,6 @@ ADAPTIVEMAXPOOLING = "adaptive_max_pooling"
 
 normalization = MINMAX #ZNORM
 #pooling_type = ADAPTIVEMAXPOOLING #SORTPOOLING
-
-UNDERSAMPLING_STRAT= 0.2
-UNDERSAMPLING_METHOD = None # "random" "kmeans" #None
 
 USE_FOCAL_LOSS = False
 alpha = 0.5
@@ -436,73 +438,6 @@ def focal_loss(outputs, targets, weight=None, alpha=0.5, gamma=2.0):
     one_hot = F.one_hot(targets, num_classes=2).float()
     return sigmoid_focal_loss(outputs, one_hot, alpha=alpha, gamma=gamma, reduction="mean")
 
-
-# Preprocessing and basic stats
-df['label'] = df['label'].astype(int)
-df['sample_weight'] = 1 + df['label'] * sample_weight_value
-
-print(f" Dataset before undersampling: {len(df)} samples")
-print(f"  - Vulnerable: {df['label'].sum()} | Non-vulnerable: {len(df) - df['label'].sum()}")
-
-# Graph size info (for SortPooling k and decoder padding decisions)
-graph_sizes = df['size'].values
-print(f" Graph size stats — Max: {np.max(graph_sizes)}, 95th percentile: {int(np.percentile(graph_sizes, 95))}")
-
-# Dataset split
-trainset_df, testset_df = train_test_split(
-    df[['graphs', 'label']],
-    test_size=0.3,
-    stratify=df['label'],
-    random_state=42
-)
-
-trainset = trainset_df.values
-testset = testset_df.values
-
-# Recalcula os pesos com base nos labels do trainset
-train_labels = trainset[:, 1].astype(int)
-
-if AUTO_WEIGHTING:
-    class_counts = np.bincount(train_labels)
-    total = sum(class_counts)
-    class_weights = [total / (2 * class_counts[i]) for i in range(len(class_counts))]
-    CEL_weight = class_weights  # [w_non_vuln, w_vuln]
-    sample_weight_value = class_counts[0] / class_counts[1]
-    print(f"[INFO] Auto-weighting: {CEL_weight}, sample_weight_value: {sample_weight_value}")
-else:
-    class_weights = CEL_weight  # já definido no topo
-    sample_weight_value = sample_weight_value  # não usado se USE_CLASS_WEIGHT=True
-
-###########################################################
-
-## Normalization
-
-all_feature_train_data = trainset[0,0].ndata['features']
-all_feature_test_data = testset[0,0].ndata['features']
-#print("train & test data shape:",all_feature_train_data.shape, all_feature_test_data.shape)
-
-for i in range(1, len(trainset)):
-    #########
-    current_feat = trainset[i, 0].ndata['features']
-    if current_feat.shape[1] != all_feature_train_data.shape[1]:
-        print(f"[ERROR] Mismatch at index {i}: Expected {all_feature_train_data.shape[1]} features but got {current_feat.shape[1]}")
-        continue  # or raise error if you want to crash here
-    #########
-    all_feature_train_data = torch.cat((all_feature_train_data, trainset[i, 0].ndata['features']), dim=0)
-
-for i in range(1, len(testset)):
-    all_feature_test_data = torch.cat((all_feature_test_data, testset[i, 0].ndata['features']), dim=0)
-
-feat_amin_train = torch.amin(all_feature_train_data, 0)
-feat_amax_train = torch.amax(all_feature_train_data, 0)
-feat_mean_train = torch.mean(all_feature_train_data, 0)
-feat_std_train = torch.std(all_feature_train_data, 0)
-
-feat_amin_test = torch.amin(all_feature_test_data, 0)
-feat_amax_test = torch.amax(all_feature_test_data, 0)
-feat_mean_test = torch.mean(all_feature_test_data, 0)
-feat_std_test = torch.std(all_feature_test_data, 0)
-
 def normalize_minmax(dataset, feat_minimum, feat_maximum):
     denominator = feat_maximum - feat_minimum
     # Corrige casos onde max == min (sem variação)
@@ -519,18 +454,6 @@ def normalize_znorm(dataset, feat_mean, feat_std):
         dataset[i, 0].ndata['features'] = torch.div(torch.sub(dataset[i, 0].ndata['features'], feat_mean), feat_std)
     return dataset
 
-
-print("Normalization to be performed")
-if normalization == ZNORM:
-    trainset = normalize_znorm(trainset, feat_mean_train, feat_std_train)
-    testset = normalize_znorm(testset, feat_mean_test, feat_std_test)
-if normalization == MINMAX: 
-    trainset = normalize_minmax(trainset, feat_amin_train, feat_amax_train)
-    testset = normalize_minmax(testset, feat_amin_test, feat_amax_test)
-
-
-###########################################################
-
 def adjust_dataset(dataset):
     if graph_type != 'cfg':
         return dataset  # No adjustment needed for AST/PDG
@@ -542,362 +465,464 @@ def adjust_dataset(dataset):
         dataset[i, 0].ndata['features'] = t
     return dataset
 
-#  Removes one feature as it is always zero (no node was assigned to type "numeric constant")
-#print(trainset.shape)
-if normalization is not None or normalization == "":
-    trainset = adjust_dataset(trainset)
-    testset = adjust_dataset(testset)
-    if graph_type == 'cfg':
-        if num_features > 11:
-            # memory management features are also available
-            num_features -= 3
+
+# Preprocessing and basic stats
+df['label'] = df['label'].astype(int)
+df['sample_weight'] = 1 + df['label'] * sample_weight_value
+
+print(f" Dataset before undersampling: {len(df)} samples")
+print(f"  - Vulnerable: {df['label'].sum()} | Non-vulnerable: {len(df) - df['label'].sum()}")
+
+# Graph size info (for SortPooling k and decoder padding decisions)
+graph_sizes = df['size'].values
+print(f" Graph size stats — Max: {np.max(graph_sizes)}, 95th percentile: {int(np.percentile(graph_sizes, 95))}")
+
+run_metrics = []
+
+for run_idx in range(N_RUNS):
+    print(f"\n========== RUN {run_idx + 1}/{N_RUNS} ==========\n")
+    seed = SEED_LIST[run_idx]
+
+    # Dataset split
+    trainset_df, testset_df = train_test_split(
+        df[['graphs', 'label']],
+        test_size=0.3,
+        stratify=df['label'],
+        random_state=seed
+    )
+
+    trainset = trainset_df.values
+    testset = testset_df.values
+
+    # Recalcula os pesos com base nos labels do trainset
+    train_labels = trainset[:, 1].astype(int)
+
+    if AUTO_WEIGHTING:
+        class_counts = np.bincount(train_labels)
+        total = sum(class_counts)
+        class_weights = [total / (2 * class_counts[i]) for i in range(len(class_counts))]
+        CEL_weight = class_weights  # [w_non_vuln, w_vuln]
+        sample_weight_value = class_counts[0] / class_counts[1]
+        print(f"[INFO] Auto-weighting: {CEL_weight}, sample_weight_value: {sample_weight_value}")
+    else:
+        class_weights = CEL_weight  # já definido no topo
+        sample_weight_value = sample_weight_value  # não usado se USE_CLASS_WEIGHT=True
+
+    ###########################################################
+
+    ## Normalization
+
+    all_feature_train_data = trainset[0,0].ndata['features']
+    all_feature_test_data = testset[0,0].ndata['features']
+    #print("train & test data shape:",all_feature_train_data.shape, all_feature_test_data.shape)
+
+    for i in range(1, len(trainset)):
+        #########
+        current_feat = trainset[i, 0].ndata['features']
+        if current_feat.shape[1] != all_feature_train_data.shape[1]:
+            print(f"[ERROR] Mismatch at index {i}: Expected {all_feature_train_data.shape[1]} features but got {current_feat.shape[1]}")
+            continue  # or raise error if you want to crash here
+        #########
+        all_feature_train_data = torch.cat((all_feature_train_data, trainset[i, 0].ndata['features']), dim=0)
+
+    for i in range(1, len(testset)):
+        all_feature_test_data = torch.cat((all_feature_test_data, testset[i, 0].ndata['features']), dim=0)
+
+    feat_amin_train = torch.amin(all_feature_train_data, 0)
+    feat_amax_train = torch.amax(all_feature_train_data, 0)
+    feat_mean_train = torch.mean(all_feature_train_data, 0)
+    feat_std_train = torch.std(all_feature_train_data, 0)
+
+    feat_amin_test = torch.amin(all_feature_test_data, 0)
+    feat_amax_test = torch.amax(all_feature_test_data, 0)
+    feat_mean_test = torch.mean(all_feature_test_data, 0)
+    feat_std_test = torch.std(all_feature_test_data, 0)
+
+
+    print("Normalization to be performed")
+    if normalization == ZNORM:
+        trainset = normalize_znorm(trainset, feat_mean_train, feat_std_train)
+        testset = normalize_znorm(testset, feat_mean_test, feat_std_test)
+    if normalization == MINMAX: 
+        trainset = normalize_minmax(trainset, feat_amin_train, feat_amax_train)
+        testset = normalize_minmax(testset, feat_amin_test, feat_amax_test)
+
+    #  Removes one feature as it is always zero (no node was assigned to type "numeric constant")
+    #print(trainset.shape)
+    if normalization is not None or normalization == "":
+        trainset = adjust_dataset(trainset)
+        testset = adjust_dataset(testset)
+        if graph_type == 'cfg':
+            if num_features > 11:
+                # memory management features are also available
+                num_features -= 3
+            else:
+                num_features -= 1
+    print("len(trainset):", len(trainset))
+
+    ###########################################################
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    weight = torch.tensor(CEL_weight, dtype=torch.float, device=device)
+
+    ### Data balacing and DataLoader setup
+    if USE_BOTH_WEIGHTING:
+        sample_weights = 1 + train_labels * sample_weight_value
+        sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
+        data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
+
+        if USE_FOCAL_LOSS:
+            loss_func = lambda outputs, targets: focal_loss(outputs, targets, weight)
+            print(f"[INFO] Using BOTH sample weights and Focal Loss: {CEL_weight}, sample_weights: {sample_weights[:10]}...")
         else:
-            num_features -= 1
-print("len(trainset):", len(trainset))
+            loss_func = nn.CrossEntropyLoss(weight=weight)
+            print(f"[INFO] Using BOTH sample weights (sampler) and class weights (loss): {CEL_weight}, sample_weights: {sample_weights[:10]}...")
 
-###########################################################
+    elif not USE_CLASS_WEIGHT:
+        sample_weights = 1 + train_labels * sample_weight_value
+        sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
+        data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-weight = torch.tensor(CEL_weight, dtype=torch.float, device=device)
+        if USE_FOCAL_LOSS:
+            loss_func = lambda outputs, targets: focal_loss(outputs, targets, None)
+            print(f"[INFO] Using ONLY sample weights and Focal Loss: {sample_weights[:10]}...")
+        else:
+            loss_func = nn.CrossEntropyLoss()
+            print(f"[INFO] Using ONLY sample weights (sampler): {sample_weights[:10]}...")
 
-### Data balacing and DataLoader setup
-if USE_BOTH_WEIGHTING:
-    sample_weights = 1 + train_labels * sample_weight_value
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
-    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
-
-    if USE_FOCAL_LOSS:
-        loss_func = lambda outputs, targets: focal_loss(outputs, targets, weight)
-        print(f"[INFO] Using BOTH sample weights and Focal Loss: {CEL_weight}, sample_weights: {sample_weights[:10]}...")
     else:
-        loss_func = nn.CrossEntropyLoss(weight=weight)
-        print(f"[INFO] Using BOTH sample weights (sampler) and class weights (loss): {CEL_weight}, sample_weights: {sample_weights[:10]}...")
+        data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, shuffle=True)
 
-elif not USE_CLASS_WEIGHT:
-    sample_weights = 1 + train_labels * sample_weight_value
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(trainset), replacement=True)
-    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, sampler=sampler)
+        if USE_FOCAL_LOSS:
+            loss_func = lambda outputs, targets: focal_loss(outputs, targets, weight)
+            print(f"[INFO] Using ONLY class weights and Focal Loss: {CEL_weight}")
+        else:
+            loss_func = nn.CrossEntropyLoss(weight=weight)
+            print(f"[INFO] Using ONLY class weights (loss): {CEL_weight}")
 
-    if USE_FOCAL_LOSS:
-        loss_func = lambda outputs, targets: focal_loss(outputs, targets, None)
-        print(f"[INFO] Using ONLY sample weights and Focal Loss: {sample_weights[:10]}...")
+
+
+    # (Opcional) debug para garantir que as proporções estão corretas
+    print(f"[DEBUG] Trainset: {sum(train_labels)} vulnerable / {len(train_labels)} total")
+    print(f"[DEBUG] Testset:  {sum(testset[:,1])} vulnerable / {len(testset)} total")
+
+    # Initialize modules explicitly (modular setup)
+    if classifier_type == "vgg":
+        encoder = DGCNNEncoder(num_features, hidden_dimension, k_sortpooling=k_sortpooling, use_sortpool=False).to(device)
     else:
-        loss_func = nn.CrossEntropyLoss()
-        print(f"[INFO] Using ONLY sample weights (sampler): {sample_weights[:10]}...")
+        encoder = DGCNNEncoder(num_features, hidden_dimension, k_sortpooling=k_sortpooling, use_sortpool=True).to(device)
 
-else:
-    data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, shuffle=True)
 
-    if USE_FOCAL_LOSS:
-        loss_func = lambda outputs, targets: focal_loss(outputs, targets, weight)
-        print(f"[INFO] Using ONLY class weights and Focal Loss: {CEL_weight}")
+    if classifier_type == "vgg":
+        vgg_adapter = DGCNNVGGAdapter(embedding_dim=sum(hidden_dimension), conv2d_channels=conv2dChannelParam, k_amp=k_amp).to(device)
+        classifier_model = VGGnet(in_channels=conv2dChannelParam).to(device)
+    elif classifier_type == "conv1d":
+        classifier_model = DGCNNConv1DClassifier(input_dim=k_sortpooling * hidden_dimension[-1]).to(device)
     else:
-        loss_func = nn.CrossEntropyLoss(weight=weight)
-        print(f"[INFO] Using ONLY class weights (loss): {CEL_weight}")
+        raise ValueError("Invalid classifier type. Choose 'vgg' or 'conv1d'.")
 
+    # Prepara argumentos comuns para save_embeddings
+    vgg_adapter_arg = vgg_adapter if classifier_type == "vgg" else None
+    classifier_model_arg = classifier_model if classifier_type in ["vgg", "conv1d"] else None
 
+    # Hyperparameters dict clearly documented
+    # Hyperparameters dict clearly documented
+    params_dict = {
+        "dataset_name": dataset_name,
+        "hidden_dimensions": hidden_dimension,
+        "normalization": normalization,
+        "num_epochs": num_epochs,
 
-# (Opcional) debug para garantir que as proporções estão corretas
-print(f"[DEBUG] Trainset: {sum(train_labels)} vulnerable / {len(train_labels)} total")
-print(f"[DEBUG] Testset:  {sum(testset[:,1])} vulnerable / {len(testset)} total")
+        # Weighting strategy
+        "auto_weighting": AUTO_WEIGHTING,
+        "use_class_weight": USE_CLASS_WEIGHT,
+        "use_both_weighting": USE_BOTH_WEIGHTING,
+        "CEL_weight": CEL_weight,
+        "sample_weight_value": sample_weight_value,
 
-# Initialize modules explicitly (modular setup)
-if classifier_type == "vgg":
-    encoder = DGCNNEncoder(num_features, hidden_dimension, k_sortpooling=k_sortpooling, use_sortpool=False).to(device)
-else:
-    encoder = DGCNNEncoder(num_features, hidden_dimension, k_sortpooling=k_sortpooling, use_sortpool=True).to(device)
+        # Focal Loss
+        "use_focal_loss": USE_FOCAL_LOSS,
+        "focal_alpha": alpha,
+        "focal_gamma": gamma,
 
+        # Model architecture
+        "classifier_type": classifier_type,
+        "k_amp": k_amp if classifier_type == "vgg" else "N/A",
+        "k_sortpooling": k_sortpooling,
+        #"heads": heads,
+        "dropout_rate": dropout_rate,
+        "conv2dChannelParam": conv2dChannelParam if classifier_type == "vgg" else "N/A",
 
-if classifier_type == "vgg":
-    vgg_adapter = DGCNNVGGAdapter(embedding_dim=sum(hidden_dimension), conv2d_channels=conv2dChannelParam, k_amp=k_amp).to(device)
-    classifier_model = VGGnet(in_channels=conv2dChannelParam).to(device)
-elif classifier_type == "conv1d":
-    classifier_model = DGCNNConv1DClassifier(input_dim=k_sortpooling * hidden_dimension[-1]).to(device)
-else:
-    raise ValueError("Invalid classifier type. Choose 'vgg' or 'conv1d'.")
+        # Autoencoder
+        "USE_AUTOENCODER": USE_AUTOENCODER,
+        "AUTOENCODER_EPOCHS": AUTOENCODER_EPOCHS,
+        "FREEZE_ENCODER": FREEZE_ENCODER,
 
-# Prepara argumentos comuns para save_embeddings
-vgg_adapter_arg = vgg_adapter if classifier_type == "vgg" else None
-classifier_model_arg = classifier_model if classifier_type in ["vgg", "conv1d"] else None
+        # Learning rates
+        "learning_rate_ae": learning_rate_ae,
+        "learning_rate_classifier": learning_rate
+    }
 
-# Hyperparameters dict clearly documented
-# Hyperparameters dict clearly documented
-params_dict = {
-    "dataset_name": dataset_name,
-    "hidden_dimensions": hidden_dimension,
-    "normalization": normalization,
-    "num_epochs": num_epochs,
-    "undersampling_method": UNDERSAMPLING_METHOD or "None",
-    "undersampling_ratio": UNDERSAMPLING_STRAT,
+    artifact_suffix = (
+        f"{dataset_name}"
+        f"_hd-{format_hidden_dim(hidden_dimension)}"
+        f"_norm-{normalization}"
+        f"_clf-{classifier_type}"
+        f"_ep{num_epochs}"
+    )
 
-    # Weighting strategy
-    "auto_weighting": AUTO_WEIGHTING,
-    "use_class_weight": USE_CLASS_WEIGHT,
-    "use_both_weighting": USE_BOTH_WEIGHTING,
-    "CEL_weight": CEL_weight,
-    "sample_weight_value": sample_weight_value,
+    # Estratégia de balanceamento
+    if USE_BOTH_WEIGHTING:
+        artifact_suffix += f"_wboth_cw-{int(CEL_weight[0])}-{int(CEL_weight[1])}_swv{round(sample_weight_value, 2)}"
+    elif USE_CLASS_WEIGHT:
+        artifact_suffix += f"_wcw-{int(CEL_weight[0])}-{int(CEL_weight[1])}"
+    else:
+        artifact_suffix += f"_wsw_swv{round(sample_weight_value, 2)}"
 
-    # Focal Loss
-    "use_focal_loss": USE_FOCAL_LOSS,
-    "focal_alpha": alpha,
-    "focal_gamma": gamma,
+    # Focal loss
+    if USE_FOCAL_LOSS:
+        artifact_suffix += f"_focal-a{alpha}-g{gamma}"
 
-    # Model architecture
-    "classifier_type": classifier_type,
-    "k_amp": k_amp if classifier_type == "vgg" else "N/A",
-    "k_sortpooling": k_sortpooling,
-    #"heads": heads,
-    "dropout_rate": dropout_rate,
-    "conv2dChannelParam": conv2dChannelParam if classifier_type == "vgg" else "N/A",
+    # Componentes da arquitetura
+    artifact_suffix += (
+        f"_k{k_sortpooling}" if classifier_type == "conv1d" else ""
+        f"-ampk{k_amp}" if classifier_type == "vgg" else ""
+    )
+    artifact_suffix += f"_dr{dropout_rate}"
+
+    if classifier_type == "vgg":
+        artifact_suffix += f"_c2d{conv2dChannelParam}"
 
     # Autoencoder
-    "USE_AUTOENCODER": USE_AUTOENCODER,
-    "AUTOENCODER_EPOCHS": AUTOENCODER_EPOCHS,
-    "FREEZE_ENCODER": FREEZE_ENCODER,
-
-    # Learning rates
-    "learning_rate_ae": learning_rate_ae,
-    "learning_rate_classifier": learning_rate
-}
-
-
-
-artifact_suffix = (
-    f"{dataset_name}"
-    f"_hd-{format_hidden_dim(hidden_dimension)}"
-    f"_norm-{normalization}"
-    f"_clf-{classifier_type}"
-    f"_ep{num_epochs}"
-)
-
-# Estratégia de balanceamento
-if USE_BOTH_WEIGHTING:
-    artifact_suffix += f"_wboth_cw-{int(CEL_weight[0])}-{int(CEL_weight[1])}_swv{round(sample_weight_value, 2)}"
-elif USE_CLASS_WEIGHT:
-    artifact_suffix += f"_wcw-{int(CEL_weight[0])}-{int(CEL_weight[1])}"
-else:
-    artifact_suffix += f"_wsw_swv{round(sample_weight_value, 2)}"
-
-# Focal loss
-if USE_FOCAL_LOSS:
-    artifact_suffix += f"_focal-a{alpha}-g{gamma}"
-
-# Componentes da arquitetura
-artifact_suffix += (
-    f"_k{k_sortpooling}" if classifier_type == "conv1d" else ""
-    f"-ampk{k_amp}" if classifier_type == "vgg" else ""
-)
-artifact_suffix += f"_dr{dropout_rate}"
-
-if classifier_type == "vgg":
-    artifact_suffix += f"_c2d{conv2dChannelParam}"
-
-# Autoencoder
-artifact_suffix += (
-    f"_ae{int(USE_AUTOENCODER)}"
-    f"-aep{AUTOENCODER_EPOCHS}-fz{int(FREEZE_ENCODER)}" if USE_AUTOENCODER else "_noae"
-)
-
-
-output_base_dir = "output/runs"
-run_output_dir = os.path.join(output_base_dir, artifact_suffix)
-embedding_dir = os.path.join(run_output_dir, "embeddings")
-prediction_dir = os.path.join(run_output_dir, "predictions")
-stats_dir = os.path.join(run_output_dir, "stats")
-
-for directory in [embedding_dir, prediction_dir, stats_dir]:
-    os.makedirs(directory, exist_ok=True)
-
-if USE_AUTOENCODER:
-    decoder = GraphDecoder(
-        embedding_dim=hidden_dimension[-1],  # ← novo: só a última camada do encoder
-        num_nodes=NUM_NODES,
-        feature_dim=num_features
-    ).to(device)
-
-    print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
-    train_autoencoder(
-        encoder=encoder,
-        decoder=decoder,
-        data_loader=data_loader,
-        device=device,
-        num_nodes=NUM_NODES,
-        feature_dim=num_features,
-        num_epochs=AUTOENCODER_EPOCHS,
-        stats_dir=stats_dir
+    artifact_suffix += (
+        f"_ae{int(USE_AUTOENCODER)}"
+        f"-aep{AUTOENCODER_EPOCHS}-fz{int(FREEZE_ENCODER)}" if USE_AUTOENCODER else "_noae"
     )
-    print("[INFO] Autoencoder training completed.\n")
-
-    if FREEZE_ENCODER:
-        for param in encoder.parameters():
-            param.requires_grad = False
 
 
-# Optimizer setup
-trainable_params = list(filter(lambda p: p.requires_grad, encoder.parameters()))
-if classifier_type == "vgg":
-    trainable_params += list(vgg_adapter.parameters()) + list(classifier_model.parameters())
-else:
-    trainable_params += list(classifier_model.parameters())
+    output_base_dir = "output/runs"
+    run_output_dir = os.path.join(output_base_dir, artifact_suffix, f"run_{run_idx + 1}")
+    embedding_dir = os.path.join(run_output_dir, "embeddings")
+    prediction_dir = os.path.join(run_output_dir, "predictions")
+    stats_dir = os.path.join(run_output_dir, "stats")
 
-optimizer = optim.Adam(trainable_params, lr=learning_rate)
+    for directory in [embedding_dir, prediction_dir, stats_dir]:
+        os.makedirs(directory, exist_ok=True)
 
-#weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
-#loss_func = nn.CrossEntropyLoss(weight=weight)
+    if USE_AUTOENCODER:
+        decoder = GraphDecoder(
+            embedding_dim=hidden_dimension[-1],  # ← novo: só a última camada do encoder
+            num_nodes=NUM_NODES,
+            feature_dim=num_features
+        ).to(device)
 
-# Training phase
-if not FREEZE_ENCODER:
-    encoder.train()
-if classifier_type == "vgg":
-    vgg_adapter.train()
-classifier_model.train()
+        print(f"[INFO] Starting autoencoder pretraining ({AUTOENCODER_EPOCHS} epochs)")
+        train_autoencoder(
+            encoder=encoder,
+            decoder=decoder,
+            data_loader=data_loader,
+            device=device,
+            num_nodes=NUM_NODES,
+            feature_dim=num_features,
+            num_epochs=AUTOENCODER_EPOCHS,
+            stats_dir=stats_dir
+        )
+        print("[INFO] Autoencoder training completed.\n")
 
-stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
-
-# Antes do treino
-if SAVE_EMBEDDINGS:
-    save_embeddings(
-        encoder=encoder,
-        dataset=testset,
-        device=device,
-        embedding_dir=embedding_dir,
-        prediction_dir=prediction_dir,
-        prefix="test_before",
-        batch_size=batch_size,
-        classifier_type=classifier_type,
-        vgg_adapter=vgg_adapter_arg,
-        classifier_model=classifier_model_arg
-    )
-else:
-    print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
+        if FREEZE_ENCODER:
+            for param in encoder.parameters():
+                param.requires_grad = False
 
 
-print("\n========= Starting Training Phase ==========")
-train_start = time.time()
-for epoch in range(num_epochs):
-    total_loss, correct, total = 0, 0, 0
+    # Optimizer setup
+    trainable_params = list(filter(lambda p: p.requires_grad, encoder.parameters()))
+    if classifier_type == "vgg":
+        trainable_params += list(vgg_adapter.parameters()) + list(classifier_model.parameters())
+    else:
+        trainable_params += list(classifier_model.parameters())
 
-    for graphs, labels in data_loader:
-        graphs = [g.to(device) for g in graphs]
-        labels = labels.to(device)
+    optimizer = optim.Adam(trainable_params, lr=learning_rate)
 
-        embeddings = encoder(graphs)
-        if classifier_type == "vgg":
-            batched_graph = embeddings  # returned from encoder when use_sortpool=False
-            vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
-            predictions = classifier_model(vgg_input)
-        else:
-            predictions = classifier_model(embeddings)
+    #weight = torch.tensor(CEL_weight, dtype=torch.float, device=device) if USE_CLASS_WEIGHT else None
+    #loss_func = nn.CrossEntropyLoss(weight=weight)
 
-        loss = loss_func(predictions, labels)
+    # Training phase
+    if not FREEZE_ENCODER:
+        encoder.train()
+    if classifier_type == "vgg":
+        vgg_adapter.train()
+    classifier_model.train()
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    stats_dict = {'epoch': [], 'loss': [], 'accuracy': []}
 
-        total_loss += loss.item()
-        correct += (predictions.argmax(dim=1) == labels).sum().item()
-        total += labels.size(0)
+    # Antes do treino
+    if SAVE_EMBEDDINGS:
+        save_embeddings(
+            encoder=encoder,
+            dataset=testset,
+            device=device,
+            embedding_dir=embedding_dir,
+            prediction_dir=prediction_dir,
+            prefix="test_before",
+            batch_size=batch_size,
+            classifier_type=classifier_type,
+            vgg_adapter=vgg_adapter_arg,
+            classifier_model=classifier_model_arg
+        )
+    else:
+        print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
 
-    epoch_loss = total_loss / len(data_loader)
-    accuracy = correct / total
 
-    stats_dict['epoch'].append(epoch)
-    stats_dict['loss'].append(epoch_loss)
-    stats_dict['accuracy'].append(accuracy)
+    print("\n========= Starting Training Phase ==========")
+    train_start = time.time()
+    for epoch in range(num_epochs):
+        total_loss, correct, total = 0, 0, 0
 
-    print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
+        for graphs, labels in data_loader:
+            graphs = [g.to(device) for g in graphs]
+            labels = labels.to(device)
 
-train_end = time.time()
-print(f"[INFO] Training completed in {(train_end - train_start):.2f} seconds.\n")
+            embeddings = encoder(graphs)
+            if classifier_type == "vgg":
+                batched_graph = embeddings  # returned from encoder when use_sortpool=False
+                vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
+                predictions = classifier_model(vgg_input)
+            else:
+                predictions = classifier_model(embeddings)
 
-# Save stats clearly
-df_stats = pd.DataFrame(stats_dict).set_index('epoch')
-df_stats.plot(figsize=(8, 5))
-plt.xlabel('Epoch')
-plt.title('Training Loss and Accuracy')
-plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
-plt.close()
-df_stats.to_csv(os.path.join(stats_dir, "training_stats.csv"))
+            loss = loss_func(predictions, labels)
 
-with open(os.path.join(stats_dir, "training_metadata.txt"), "w") as f:
-    f.write(f"Training time (seconds): {train_end - train_start:.2f}\n")
-    f.write(f"Epochs: {num_epochs}\n")
-    f.write(f"Final loss: {epoch_loss:.4f}\n")
-    f.write(f"Final accuracy: {accuracy:.4f}\n")
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-if SAVE_EMBEDDINGS:
-    save_embeddings(
-        encoder=encoder,
-        dataset=testset,
-        device=device,
-        embedding_dir=embedding_dir,
-        prediction_dir=prediction_dir,
-        prefix="test_after",
-        batch_size=batch_size,
-        classifier_type=classifier_type,
-        vgg_adapter=vgg_adapter_arg,
-        classifier_model=classifier_model_arg
-    )
-else:
-    print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
+            total_loss += loss.item()
+            correct += (predictions.argmax(dim=1) == labels).sum().item()
+            total += labels.size(0)
 
-# Evaluation Phase
-encoder.eval()
-if classifier_type == "vgg":
-    vgg_adapter.eval()
-classifier_model.eval()
+        epoch_loss = total_loss / len(data_loader)
+        accuracy = correct / total
 
-print("\n========= Starting Evaluation Phase =========")
-all_preds, all_labels = [], []
+        stats_dict['epoch'].append(epoch)
+        stats_dict['loss'].append(epoch_loss)
+        stats_dict['accuracy'].append(accuracy)
 
-with torch.no_grad():
-    for graphs, labels in DataLoader(testset, batch_size=batch_size, collate_fn=collate):
-        graphs = [g.to(device) for g in graphs]
-        labels = labels.cpu().numpy()
+        print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
 
-        embeddings = encoder(graphs)
-        if classifier_type == "vgg":
-            batched_graph = embeddings  # encoder returned the batched graph
-            vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
-            preds = classifier_model(vgg_input).argmax(dim=1).cpu().numpy()
-        else:
-            preds = classifier_model(embeddings).argmax(dim=1).cpu().numpy()
+    train_end = time.time()
+    print(f"[INFO] Training completed in {(train_end - train_start):.2f} seconds.\n")
 
-        all_preds.extend(preds)
-        all_labels.extend(labels)
+    # Save stats clearly
+    df_stats = pd.DataFrame(stats_dict).set_index('epoch')
+    df_stats.plot(figsize=(8, 5))
+    plt.xlabel('Epoch')
+    plt.title('Training Loss and Accuracy')
+    plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
+    plt.close()
+    df_stats.to_csv(os.path.join(stats_dir, "training_stats.csv"))
 
-# Metrics & Confusion Matrix
-classification_df = pd.DataFrame(classification_report(all_labels, all_preds, output_dict=True, zero_division=0)).transpose()
-classification_df.to_csv(os.path.join(stats_dir, "classification_report.csv"))
+    with open(os.path.join(stats_dir, "training_metadata.txt"), "w") as f:
+        f.write(f"Training time (seconds): {train_end - train_start:.2f}\n")
+        f.write(f"Epochs: {num_epochs}\n")
+        f.write(f"Final loss: {epoch_loss:.4f}\n")
+        f.write(f"Final accuracy: {accuracy:.4f}\n")
 
-cm = confusion_matrix(all_labels, all_preds)
-cm_sum = np.sum(cm)
-cm_percent = cm / cm_sum * 100
+    if SAVE_EMBEDDINGS:
+        save_embeddings(
+            encoder=encoder,
+            dataset=testset,
+            device=device,
+            embedding_dir=embedding_dir,
+            prediction_dir=prediction_dir,
+            prefix="test_after",
+            batch_size=batch_size,
+            classifier_type=classifier_type,
+            vgg_adapter=vgg_adapter_arg,
+            classifier_model=classifier_model_arg
+        )
+    else:
+        print("[INFO] SAVE_EMBEDDINGS=False → Skipping .pt saving")
 
-# Create labels with both count and percentage
-labels = np.array([
-    [f"{cm[i, j]}\n({cm_percent[i, j]:.1f}%)" for j in range(cm.shape[1])]
-    for i in range(cm.shape[0])
-])
+    # Evaluation Phase
+    encoder.eval()
+    if classifier_type == "vgg":
+        vgg_adapter.eval()
+    classifier_model.eval()
 
-plt.figure(figsize=(6, 5))
-sns.heatmap(cm, annot=labels, fmt="", cmap="Blues", cbar=False,
-            xticklabels=["Neutral (0)", "Vulnerable (1)"],
-            yticklabels=["Neutral (0)", "Vulnerable (1)"])
-plt.xlabel("Predicted Label")
-plt.ylabel("True Label")
-plt.title("Confusion Matrix with Percentages")
-plt.tight_layout()
-plt.savefig(os.path.join(stats_dir, "confusion_matrix.png"))
-plt.close()
+    print("\n========= Starting Evaluation Phase =========")
+    all_preds, all_labels = [], []
 
-print("\n[CONFUSION MATRIX]")
-print(cm)
+    with torch.no_grad():
+        for graphs, labels in DataLoader(testset, batch_size=batch_size, collate_fn=collate):
+            graphs = [g.to(device) for g in graphs]
+            labels = labels.cpu().numpy()
 
-# Optional: Also print the full classification report
-print("\n[CLASSIFICATION REPORT]")
-print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
+            embeddings = encoder(graphs)
+            if classifier_type == "vgg":
+                batched_graph = embeddings  # encoder returned the batched graph
+                vgg_input = adjust_to_vgg(vgg_adapter(batched_graph))
+                preds = classifier_model(vgg_input).argmax(dim=1).cpu().numpy()
+            else:
+                preds = classifier_model(embeddings).argmax(dim=1).cpu().numpy()
 
-# Log hyperparameters
-log_hyperparameters(run_output_dir, params_dict)
+            all_preds.extend(preds)
+            all_labels.extend(labels)
+
+    # Metrics & Confusion Matrix
+    classification_df = pd.DataFrame(classification_report(all_labels, all_preds, output_dict=True, zero_division=0)).transpose()
+    classification_df.to_csv(os.path.join(stats_dir, "classification_report.csv"))
+
+    cm = confusion_matrix(all_labels, all_preds)
+    cm_sum = np.sum(cm)
+    cm_percent = cm / cm_sum * 100
+
+    # Create labels with both count and percentage
+    labels = np.array([
+        [f"{cm[i, j]}\n({cm_percent[i, j]:.1f}%)" for j in range(cm.shape[1])]
+        for i in range(cm.shape[0])
+    ])
+
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=labels, fmt="", cmap="Blues", cbar=False,
+                xticklabels=["Neutral (0)", "Vulnerable (1)"],
+                yticklabels=["Neutral (0)", "Vulnerable (1)"])
+    plt.xlabel("Predicted Label")
+    plt.ylabel("True Label")
+    plt.title("Confusion Matrix with Percentages")
+    plt.tight_layout()
+    plt.savefig(os.path.join(stats_dir, f"confusion_matrix_run{run_idx + 1}.png"))
+    plt.close()
+
+    print("\n[CONFUSION MATRIX]")
+    print(cm)
+
+    # Optional: Also print the full classification report
+    print("\n[CLASSIFICATION REPORT]")
+    print(classification_report(all_labels, all_preds, digits=4, zero_division=0))
+
+    acc = accuracy_score(all_labels, all_preds)
+    prec = precision_score(all_labels, all_preds, zero_division=0)
+    rec = recall_score(all_labels, all_preds, zero_division=0)
+    f1 = f1_score(all_labels, all_preds, zero_division=0)
+
+    run_metrics.append({
+        "run": run_idx + 1,
+        "seed": seed,
+        "accuracy": acc,
+        "precision": prec,
+        "recall": rec,
+        "f1_score": f1
+    })
+
+    # Log hyperparameters
+    log_hyperparameters(run_output_dir, params_dict)
+
+df_metrics = pd.DataFrame(run_metrics)
+df_metrics.to_csv("multi_run_summary.csv", index=False)
+
+print("\n===== MÉDIA FINAL =====")
+print(df_metrics.mean(numeric_only=True).to_string())
+df_metrics.to_csv(os.path.join(output_base_dir, artifact_suffix, "multi_run_summary.csv"), index=False)
+print("\n===== DESVIO PADRÃO =====")
+print(df_metrics.std(numeric_only=True).to_string())
+df_metrics.describe().to_csv(os.path.join(output_base_dir, artifact_suffix, "summary_stats.csv"))
