@@ -62,7 +62,6 @@ else:
 N_RUNS = 5  # ou 10, conforme precisares
 SEED_LIST = [42 + i*11 for i in range(N_RUNS)]  # Seeds diferentes, mas fixas
 
-
 DEBUG = False
 SAVE_EMBEDDINGS = False
 
