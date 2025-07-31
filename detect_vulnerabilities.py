@@ -646,7 +646,7 @@ params_dict = {
     "classifier_type": classifier_type,
     "k_amp": k_amp if classifier_type == "vgg" else "N/A",
     "k_sortpooling": k_sortpooling,
-    "heads": heads,
+    #"heads": heads,
     "dropout_rate": dropout_rate,
     "conv2dChannelParam": conv2dChannelParam if classifier_type == "vgg" else "N/A",
 
