@@ -452,16 +452,47 @@ def normalize_znorm(dataset, feat_mean, feat_std):
         dataset[i, 0].ndata['features'] = torch.div(torch.sub(dataset[i, 0].ndata['features'], feat_mean), feat_std)
     return dataset
 
-def adjust_dataset(dataset):
-    if graph_type != 'cfg':
-        return dataset  # No adjustment needed for AST/PDG
+def adjust_dataset(trainset, testset, remove_dead_columns=True):
+    """
+    Remove colunas totalmente zeradas dos grafos em trainset e testset.
+    Funciona para qualquer tipo de grafo (CFG, AST, PDG).
+    """
+    print(f"[INFO] ⏳ Ajustando datasets para grafos do tipo '{graph_type}'")
 
-    for i in range(len(dataset)):
-        t = dataset[i, 0].ndata['features']
-        # Remove pre-identified zero columns in CFG
-        t = torch.cat((t[:, 0:3], t[:, 4:15], t[:, 16:18]), 1) if num_features > 11 else torch.cat((t[:, 0:3], t[:, 4:]), 1)
-        dataset[i, 0].ndata['features'] = t
-    return dataset
+    # Obter número de features dos nós
+    sample_feat = trainset[0, 0].ndata['features']
+    num_feat = sample_feat.shape[1]
+    col_sums = torch.zeros(num_feat)
+
+    # Somar colunas em ambos os conjuntos
+    for ds in [trainset, testset]:
+        for i in range(len(ds)):
+            col_sums += ds[i, 0].ndata['features'].sum(dim=0)
+
+    # Identificar colunas completamente zeradas
+    zero_columns = (col_sums == 0).nonzero(as_tuple=True)[0].tolist()
+
+    if zero_columns:
+        print(f"[⚠️ WARNING] Colunas mortas detectadas: {zero_columns}")
+
+        if remove_dead_columns:
+            print("[INFO] 🧹 Removendo colunas mortas...")
+            mask = torch.ones(num_feat, dtype=torch.bool)
+            mask[zero_columns] = False
+
+            for ds in [trainset, testset]:
+                for i in range(len(ds)):
+                    f = ds[i, 0].ndata['features']
+                    ds[i, 0].ndata['features'] = f[:, mask]
+
+            global num_features
+            num_features = mask.sum().item()
+            print(f"[INFO] 🧪 Num features após limpeza: {num_features}")
+    else:
+        print("[✅ OK] Nenhuma coluna morta detectada.")
+        num_features = num_feat
+
+    return trainset, testset
 
 
 # Preprocessing and basic stats
@@ -551,9 +582,8 @@ for run_idx in range(N_RUNS):
     #  Removes one feature as it is always zero (no node was assigned to type "numeric constant")
     #print(trainset.shape)
     if normalization is not None or normalization == "":
-        trainset = adjust_dataset(trainset)
-        testset = adjust_dataset(testset)
-        num_features = trainset[0][0].ndata['features'].shape[1]
+        trainset, testset = adjust_dataset(trainset, testset)
+        #num_features = trainset[0][0].ndata['features'].shape[1]
         #if graph_type == 'cfg':
         #    if num_features > 11:
         #        # memory management features are also available
