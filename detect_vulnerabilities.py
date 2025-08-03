@@ -59,7 +59,7 @@ else:
 
 # %%
 
-N_RUNS = 5  # ou 10, conforme precisares
+N_RUNS = 10  # ou 10, conforme precisares
 SEED_LIST = [42 + i*11 for i in range(N_RUNS)]  # Seeds diferentes, mas fixas
 
 DEBUG = False
@@ -99,7 +99,7 @@ k_amp = 32          # for Adaptive Max Pooling (VGG pathway)
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
-num_epochs = 2 #2000 #500 # 1000
+num_epochs = 10 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
@@ -846,12 +846,30 @@ for run_idx in range(N_RUNS):
 
     # Save stats clearly
     df_stats = pd.DataFrame(stats_dict).set_index('epoch')
-    df_stats.plot(figsize=(8, 5))
-    plt.xlabel('Epoch')
-    plt.title('Training Loss and Accuracy')
-    plt.savefig(os.path.join(stats_dir, f"training_results_epoch{num_epochs}.png"))
-    plt.close()
     df_stats.to_csv(os.path.join(stats_dir, "training_stats.csv"))
+
+    # === Gráfico separado de Loss e Accuracy, lado a lado ===
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Loss por epoch
+    axes[0].plot(df_stats.index, df_stats['loss'], label='Loss', color='darkred')
+    axes[0].set_title('Training Loss per Epoch')
+    axes[0].set_xlabel('Epoch')
+    axes[0].set_ylabel('Loss')
+    axes[0].grid(True)
+
+    # Accuracy por epoch
+    axes[1].plot(df_stats.index, df_stats['accuracy'], label='Accuracy', color='darkgreen')
+    axes[1].set_title('Training Accuracy per Epoch')
+    axes[1].set_xlabel('Epoch')
+    axes[1].set_ylabel('Accuracy')
+    axes[1].grid(True)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(stats_dir, f"training_loss_vs_accuracy_epoch{num_epochs}.png"))
+    plt.close()
+
+    print(f"[INFO] Saved training loss and accuracy plots to: {os.path.join(stats_dir, f'training_loss_vs_accuracy_epoch{num_epochs}.png')}")
 
     with open(os.path.join(stats_dir, "training_metadata.txt"), "w") as f:
         f.write(f"Training time (seconds): {train_end - train_start:.2f}\n")
@@ -958,3 +976,31 @@ df_metrics.to_csv(os.path.join(output_base_dir, artifact_suffix, "multi_run_summ
 print("\n===== DESVIO PADRÃO =====")
 print(df_metrics.std(numeric_only=True).to_string())
 df_metrics.describe().to_csv(os.path.join(output_base_dir, artifact_suffix, "summary_stats.csv"))
+
+# ==== Multi-run plots (Boxplot + Mean ± Std Dev Barplot) ====
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+metrics_to_plot = ['accuracy', 'precision', 'recall', 'f1_score']
+summary_plot_path = os.path.join(output_base_dir, artifact_suffix, "multi_run_summary_plots.png")
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Boxplot
+sns.boxplot(data=df_metrics[metrics_to_plot], ax=axes[0])
+axes[0].set_title("Distribution of Metrics Across Runs")
+axes[0].set_ylabel("Score")
+axes[0].set_ylim(0, 1)
+
+# Barplot com média ± std
+mean_vals = df_metrics[metrics_to_plot].mean()
+std_vals = df_metrics[metrics_to_plot].std()
+axes[1].bar(mean_vals.index, mean_vals.values, yerr=std_vals.values, capsize=5, color='skyblue')
+axes[1].set_title("Mean ± Std Dev of Metrics")
+axes[1].set_ylabel("Score")
+axes[1].set_ylim(0, 1)
+
+plt.tight_layout()
+plt.savefig(summary_plot_path)
+plt.close()
+print(f"[INFO] Multi-run performance plots saved to: {summary_plot_path}")
