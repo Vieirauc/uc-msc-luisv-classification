@@ -99,7 +99,7 @@ k_amp = 32          # for Adaptive Max Pooling (VGG pathway)
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
-num_epochs = 10 #2000 #500 # 1000
+num_epochs = 2 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
@@ -481,11 +481,14 @@ for run_idx in range(N_RUNS):
     print(f"\n========== RUN {run_idx + 1}/{N_RUNS} ==========\n")
     seed = SEED_LIST[run_idx]
 
+    run_df = df.copy(deep=True)
+    run_df['graphs'] = run_df['graphs'].apply(lambda g: g.clone())
+
     # Dataset split
     trainset_df, testset_df = train_test_split(
-        df[['graphs', 'label']],
+        run_df[['graphs', 'label']],
         test_size=0.3,
-        stratify=df['label'],
+        stratify=run_df['label'],
         random_state=seed
     )
 
@@ -550,12 +553,13 @@ for run_idx in range(N_RUNS):
     if normalization is not None or normalization == "":
         trainset = adjust_dataset(trainset)
         testset = adjust_dataset(testset)
-        if graph_type == 'cfg':
-            if num_features > 11:
-                # memory management features are also available
-                num_features -= 3
-            else:
-                num_features -= 1
+        num_features = trainset[0][0].ndata['features'].shape[1]
+        #if graph_type == 'cfg':
+        #    if num_features > 11:
+        #        # memory management features are also available
+        #        num_features -= 3
+        #    else:
+        #       num_features -= 1
     print("len(trainset):", len(trainset))
 
     ###########################################################
