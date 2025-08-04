@@ -47,7 +47,7 @@ graph_type = 'cfg' #
 
 #dataset_name = 'cfg-dataset-linux-v0.5_filtered'
 dataset_name = 'cfg-dataset-linux-sample1k'
-#dataset_name = 'pdg-dataset-linux_undersampled20k'
+#dataset_name = 'ast-dataset-linux_undersampled20k'
 
 dataset_path = 'datasets/'
 
@@ -87,19 +87,19 @@ USE_AUTOENCODER = False
 NUM_NODES = 199  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
-AUTOENCODER_EPOCHS = 50
+AUTOENCODER_EPOCHS = 20
 
-classifier_type = "conv1d"  # ou "vgg" ou "conv1d"
+classifier_type = "vgg"  # ou "vgg" ou "conv1d"
 
 #heads = 4
 hidden_dimension = [32, 32, 32, 32] 
 batch_size = 10
-k_sortpooling = 32  # for SortPooling
+k_sortpooling = 64  # for SortPooling
 k_amp = 32          # for Adaptive Max Pooling (VGG pathway)
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
-num_epochs = 10 #2000 #500 # 1000
+num_epochs = 20 #2000 #500 # 1000
 
 if graph_type == 'cfg':
     num_features = 19  # 11 base + 8 memory
