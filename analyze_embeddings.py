@@ -6,13 +6,10 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 
 # === CONFIGURATION ===
-AUTOENCONDER_EPOCHS = 10
-num_epochs = 10
-classifier_type = "conv1d"  # ou "vgg"
+classifier_type = "conv1d"  # or "vgg"
 
 run_dir = r"output\runs\cfg-dataset-linux-sample1k_hd-32-32-32-32_norm-minmax_clf-conv1d_ep20_us-0-0.2_wcw-1-3_k16_dr0.3_noae"
 embedding_dir = os.path.join(run_dir, "embeddings")
@@ -20,134 +17,124 @@ prediction_dir = os.path.join(run_dir, "predictions")
 output_dir = os.path.join(run_dir, "embedding_analysis")
 os.makedirs(output_dir, exist_ok=True)
 
-# === Define os modos a analisar ===
-MODES = {
-    "before": "test_before",
-    "after": "test_after"
-}
+# Prefixes produced by your training script
+TRAIN_PREFIX = "train_after"
+TEST_PREFIX  = "test_after"
+AE_TRAIN_PREFIX = "train_ae"   # may not exist
+AE_TEST_PREFIX  = "test_ae"    # may not exist
 
-def load_data(prefix):
-    dgcnn_file = os.path.join(embedding_dir, f"dgcnn_embeddings_{prefix}.pt")
-    predictions_file = os.path.join(prediction_dir, f"{classifier_type}_predictions_{prefix}.pt")
-    labels_file = os.path.join(embedding_dir, f"{prefix}_labels.pt")
+def _load_tensor(path):
+    t = torch.load(path)
+    return t
 
-    dgcnn_embeddings = torch.load(dgcnn_file)
-    predictions = torch.load(predictions_file)
-    labels = torch.load(labels_file)
-
-    return dgcnn_embeddings.numpy().reshape(dgcnn_embeddings.size(0), -1), \
-           predictions.numpy(), \
-           labels.numpy()
-
-def analyze_epoch(mode, prefix, view="predictions", run_random_forest=False, run_svm=False):
-    """
-    mode: "before" ou "after"
-    prefix: prefixo usado nos ficheiros
-    view: "labels" → Neutral vs Vulnerable | "predictions" → TP, FP, TN, FN
-    """
-    print(f"[INFO] Analyzing: {mode} ({prefix}) — View: {view}")
-    dgcnn_np, predictions_np, labels_np = load_data(prefix)
-
-    if view == "predictions":
-        true_positive = (predictions_np == 1) & (labels_np == 1)
-        false_positive = (predictions_np == 1) & (labels_np == 0)
-        true_negative = (predictions_np == 0) & (labels_np == 0)
-        false_negative = (predictions_np == 0) & (labels_np == 1)
-
-        tp = dgcnn_np[true_positive]
-        fp = dgcnn_np[false_positive]
-        tn = dgcnn_np[true_negative]
-        fn = dgcnn_np[false_negative]
-
-        all_dgcnn_embeddings = np.concatenate([tp, fp, tn, fn])
-        labels_dgcnn = np.concatenate([
-            np.full(len(tp), 0),  # TP
-            np.full(len(fp), 1),  # FP
-            np.full(len(tn), 2),  # TN
-            np.full(len(fn), 3),  # FN
-        ])
-
-        label_names = ["TP", "FP", "TN", "FN"]
-        colors = ["green", "red", "blue", "orange"]
-
-        if mode == "after":
-            num_positive = np.sum(labels_np == 1)
-            num_negative = np.sum(labels_np == 0)
-            print(f"[INFO] Positives: {num_positive}, Negatives: {num_negative}, Ratio: {num_positive / (num_positive + num_negative + 1e-6):.2f}")
-
-    elif view == "labels":
-        vulnerable = dgcnn_np[labels_np == 1]
-        neutral = dgcnn_np[labels_np == 0]
-
-        all_dgcnn_embeddings = np.concatenate([neutral, vulnerable])
-        labels_dgcnn = np.concatenate([
-            np.full(len(neutral), 0),
-            np.full(len(vulnerable), 1)
-        ])
-
-        label_names = ["Neutral", "Vulnerable"]
-        colors = ["blue", "red"]
-
+def _load_pack(prefix):
+    """Return (X, y, y_pred or None). X is 2D: [n_samples, feat_dim]."""
+    X_t = _load_tensor(os.path.join(embedding_dir, f"dgcnn_embeddings_{prefix}.pt"))
+    if X_t.ndim > 2:
+        X = X_t.reshape(X_t.shape[0], -1).numpy()
     else:
-        raise ValueError(f"Invalid view: {view}. Choose 'labels' or 'predictions'.")
+        X = X_t.numpy()
 
-    # PCA visualization
-    pca = PCA(n_components=2)
-    pca_result = pca.fit_transform(all_dgcnn_embeddings)
+    y = _load_tensor(os.path.join(embedding_dir, f"{prefix}_labels.pt")).numpy()
 
+    pred_path = os.path.join(prediction_dir, f"{classifier_type}_predictions_{prefix}.pt")
+    y_pred = _load_tensor(pred_path).numpy() if os.path.exists(pred_path) else None
+    return X, y, y_pred
+
+# --- Load AFTER-training splits
+X_train, y_train, y_pred_train = _load_pack(TRAIN_PREFIX)
+X_test,  y_test,  y_pred_test  = _load_pack(TEST_PREFIX)
+
+# --- Fit PCA on TRAIN, transform both
+pca_dim = 20
+pca = PCA(n_components=pca_dim).fit(X_train)
+Z_train = pca.transform(X_train)
+Z_test  = pca.transform(X_test)
+
+# --- (Optional) Export tidy CSV with PCA coords + metadata
+df_train = pd.DataFrame(Z_train, columns=[f"pc{i+1}" for i in range(Z_train.shape[1])])
+df_train["split"] = "train"
+df_train["label"] = y_train
+
+df_test = pd.DataFrame(Z_test, columns=[f"pc{i+1}" for i in range(Z_test.shape[1])])
+df_test["split"] = "test"
+df_test["label"] = y_test
+if y_pred_test is not None:
+    df_test["pred"] = y_pred_test
+
+df_all = pd.concat([df_train, df_test], ignore_index=True)
+df_all.to_csv(os.path.join(output_dir, "embeddings_pca20.csv"), index=False)
+
+# --- 2D plots (PC1 vs PC2) on TEST split
+def _scatter_2d(Z, labels, names, colors, title, out_png):
     plt.figure(figsize=(8, 6))
-    for i, label in enumerate(np.unique(labels_dgcnn)):
-        plt.scatter(pca_result[labels_dgcnn == label, 0],
-                    pca_result[labels_dgcnn == label, 1],
-                    label=label_names[label], color=colors[label], alpha=0.6)
-
-    plt.title(f"PCA - DGCNN Embeddings ({mode}, {view})")
+    for val, name, color in zip(range(len(names)), names, colors):
+        mask = (labels == val)
+        if np.any(mask):
+            plt.scatter(Z[mask, 0], Z[mask, 1], label=name, alpha=0.6)
+    plt.title(title)
     plt.legend()
-    filename = f"pca_dgcnn_{prefix}_{view}.png"
-    plt.savefig(os.path.join(output_dir, filename))
+    plt.savefig(os.path.join(output_dir, out_png))
     plt.close()
 
+# Labels view: Neutral (0) vs Vulnerable (1) on TEST
+Zt2 = Z_test[:, :2]
+labels_names = ["Neutral", "Vulnerable"]
+labels_colors = ["blue", "red"]
+_scatter_2d(Zt2, y_test, labels_names, labels_colors, "PCA (TEST) — Ground Truth", "pca_test_labels.png")
 
-  # Optional Conventional Classifiers
-    if run_random_forest or run_svm:
-        print("[INFO] Running conventional classifier(s) on embeddings...")
-        pca_full = PCA(n_components=20).fit_transform(dgcnn_np)
-        X_train, X_test, y_train, y_test = train_test_split(pca_full, labels_np, test_size=0.3, random_state=42)
+# Predictions view: TP/FP/TN/FN (only if y_pred_test exists)
+if y_pred_test is not None:
+    tp = (y_pred_test == 1) & (y_test == 1)
+    fp = (y_pred_test == 1) & (y_test == 0)
+    tn = (y_pred_test == 0) & (y_test == 0)
+    fn = (y_pred_test == 0) & (y_test == 1)
 
-        if run_random_forest:
-            clf_rf = RandomForestClassifier(n_estimators=100)
-            clf_rf.fit(X_train, y_train)
-            y_pred_rf = clf_rf.predict(X_test)
+    # Map each sample to class id 0..3
+    view_labels = np.full_like(y_test, fill_value=-1)
+    view_labels[tp] = 0
+    view_labels[fp] = 1
+    view_labels[tn] = 2
+    view_labels[fn] = 3
 
-            report_rf = classification_report(y_test, y_pred_rf, output_dict=True)
-            pd.DataFrame(report_rf).transpose().to_csv(os.path.join(output_dir, f"classification_report_rf_{prefix}.csv"))
+    names = ["TP", "FP", "TN", "FN"]
+    colors = ["green", "red", "blue", "orange"]
+    _scatter_2d(Zt2, view_labels, names, colors, "PCA (TEST) — TP/FP/TN/FN", "pca_test_predclasses.png")
 
-            cm_rf = confusion_matrix(y_test, y_pred_rf, labels=[0, 1])
-            disp_rf = ConfusionMatrixDisplay(confusion_matrix=cm_rf, display_labels=["0", "1"])
-            disp_rf.plot()
-            plt.title(f"Random Forest Confusion Matrix ({mode})")
-            plt.savefig(os.path.join(output_dir, f"confusion_matrix_rf_{prefix}.png"))
-            plt.close()
+# --- Conventional classifiers: train on TRAIN, evaluate on TEST
+print("[INFO] RF + SVM on PCA(Z) with train→test protocol")
 
-        if run_svm:
-            clf_svm = SVC(kernel='rbf', probability=True)
-            clf_svm.fit(X_train, y_train)
-            y_pred_svm = clf_svm.predict(X_test)
+# RF
+rf = RandomForestClassifier(n_estimators=200, random_state=42)
+rf.fit(Z_train, y_train)
+y_pred_rf = rf.predict(Z_test)
+pd.DataFrame(classification_report(y_test, y_pred_rf, output_dict=True)).T.to_csv(
+    os.path.join(output_dir, "classification_report_rf.csv"))
+cm_rf = confusion_matrix(y_test, y_pred_rf, labels=[0, 1])
+ConfusionMatrixDisplay(cm_rf, display_labels=["Neutral", "Vulnerable"]).plot()
+plt.title("Random Forest — Confusion Matrix (TEST)")
+plt.savefig(os.path.join(output_dir, "confusion_matrix_rf.png"))
+plt.close()
 
-            report_svm = classification_report(y_test, y_pred_svm, output_dict=True)
-            pd.DataFrame(report_svm).transpose().to_csv(os.path.join(output_dir, f"classification_report_svm_{prefix}.csv"))
+# SVM
+svm = SVC(kernel='rbf', probability=True, random_state=42)
+svm.fit(Z_train, y_train)
+y_pred_svm = svm.predict(Z_test)
+pd.DataFrame(classification_report(y_test, y_pred_svm, output_dict=True)).T.to_csv(
+    os.path.join(output_dir, "classification_report_svm.csv"))
+cm_svm = confusion_matrix(y_test, y_pred_svm, labels=[0, 1])
+ConfusionMatrixDisplay(cm_svm, display_labels=["Neutral", "Vulnerable"]).plot()
+plt.title("SVM — Confusion Matrix (TEST)")
+plt.savefig(os.path.join(output_dir, "confusion_matrix_svm.png"))
+plt.close()
 
-            cm_svm = confusion_matrix(y_test, y_pred_svm, labels=[0, 1])
-            disp_svm = ConfusionMatrixDisplay(confusion_matrix=cm_svm, display_labels=["0", "1"])
-            disp_svm.plot()
-            plt.title(f"SVM Confusion Matrix ({mode})")
-            plt.savefig(os.path.join(output_dir, f"confusion_matrix_svm_{prefix}.png"))
-            plt.close()
-
-
-# Analisar antes e depois com as duas visões
-for mode, prefix in MODES.items():
-    analyze_epoch(mode=mode, prefix=prefix, view="labels")
-    analyze_epoch(mode=mode, prefix=prefix, view="predictions", run_random_forest=True, run_svm=True)
-
-
+# --- (Optional) AE stage plots, if you saved train_ae/test_ae
+ae_train_path = os.path.join(embedding_dir, f"dgcnn_embeddings_{AE_TRAIN_PREFIX}.pt")
+ae_test_path  = os.path.join(embedding_dir, f"dgcnn_embeddings_{AE_TEST_PREFIX}.pt")
+if os.path.exists(ae_train_path) and os.path.exists(ae_test_path):
+    X_train_ae, y_train_ae, _ = _load_pack(AE_TRAIN_PREFIX)
+    X_test_ae,  y_test_ae,  _ = _load_pack(AE_TEST_PREFIX)
+    pca_ae = PCA(n_components=2).fit(X_train_ae)
+    Z_test_ae_2d = pca_ae.transform(X_test_ae)[:, :2]
+    _scatter_2d(Z_test_ae_2d, y_test_ae, ["Neutral", "Vulnerable"], ["blue", "red"],
+                "PCA (TEST) — Post-AE Encoder (no classifier)", "pca_test_labels_postae.png")
