@@ -912,7 +912,7 @@ for run_idx in range(N_RUNS):
         f.write(f"Final accuracy: {accuracy:.4f}\n")
 
     # After training completes
-    if SAVE_EMBEDDINGS:
+    if SAVE_EMBEDDINGS and not USE_AUTOENCODER:
         # Save TRAIN embeddings and final predictions
         save_embeddings(
             encoder=encoder, dataset=trainset, device=device,
