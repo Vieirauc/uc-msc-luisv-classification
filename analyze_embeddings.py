@@ -11,7 +11,7 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 # === CONFIGURATION ===
 classifier_type = "conv1d"  # or "vgg"
 
-run_dir = r"output\runs\cfg-dataset-linux-sample1k_hd-32-32-32-32_norm-minmax_clf-conv1d_ep20_us-0-0.2_wcw-1-3_k16_dr0.3_noae"
+run_dir = r"C:\Users\luka3\Desktop\UC\MSI\Tese\code\pamela_runs\docker_outputs\runs\ast-dataset-linux_undersampled20k_hd-32-32-32-32_norm-minmax_clf-conv1d_ep1_wsw_swv37.89_k64_dr0.3_noae_embsave\run_1"
 embedding_dir = os.path.join(run_dir, "embeddings")
 prediction_dir = os.path.join(run_dir, "predictions")
 output_dir = os.path.join(run_dir, "embedding_analysis")

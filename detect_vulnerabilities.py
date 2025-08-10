@@ -84,7 +84,7 @@ sample_weight_value = 1
 CEL_weight = [1,1]
 
 USE_AUTOENCODER = False
-NUM_NODES = 199  # padding fixo
+NUM_NODES = 290  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 20
