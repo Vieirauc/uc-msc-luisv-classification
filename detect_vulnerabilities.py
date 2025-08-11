@@ -330,7 +330,7 @@ def save_embeddings(encoder, dataset, device, embedding_dir, prediction_dir,
 
     data_loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate)
 
-    all_dgcnn_embeddings = []
+    all_graph_embeddings = []   # what you'll use for PCA / RF / SVM
     all_predictions = []
     all_labels = []
     all_probs = []
@@ -342,47 +342,47 @@ def save_embeddings(encoder, dataset, device, embedding_dir, prediction_dir,
             all_labels.append(labels.cpu())
 
             if classifier_type == "vgg":
-                # Encoder returns batched_graph with node embeddings in ndata['h']
+                # Encoder returns a batched_graph with node embeddings in ndata['h']
                 batched_graph = encoder(graphs)
-                node_embeddings = batched_graph.ndata['h']
-                batch_sizes = batched_graph.batch_num_nodes()
 
-                # Pool node embeddings to a single graph-level vector per graph
-                split_feats = torch.split(node_embeddings, batch_sizes.tolist())
-                pooled = torch.stack([f.mean(dim=0) for f in split_feats], dim=0)
-                all_dgcnn_embeddings.append(pooled.cpu())
+                # Adapter converts per-graph node embeddings -> (B, C, k_amp, F)
+                adapted = vgg_adapter(batched_graph)  # no padding yet
+                B, C, H, W = adapted.shape
 
-                # Run classifier if provided
-                if classifier_model is not None:
-                    clf_input = adjust_to_vgg(vgg_adapter(batched_graph))
-                    logits = classifier_model(clf_input.to(device))
-                    preds = logits.argmax(dim=1)
-                    probs = torch.softmax(logits, dim=1)
+                # ---- Saved embedding = flattened adapter output (exact content VGG uses) ----
+                graph_vecs = adapted.view(B, -1)          # (B, C*k_amp*F)
+                all_graph_embeddings.append(graph_vecs.cpu())
 
-                    all_predictions.append(preds.cpu())
-                    all_probs.append(probs.cpu())
+                # Classifier forward uses the padded 224x224 image
+                vgg_in = adjust_to_vgg(adapted)
+                logits = classifier_model(vgg_in.to(device))
+                preds = logits.argmax(dim=1)
+                probs = torch.softmax(logits, dim=1)
+                all_predictions.append(preds.cpu())
+                all_probs.append(probs.cpu())
 
             elif classifier_type == "conv1d":
-                embeddings = encoder(graphs)  # Graph-level embeddings via SortPooling
-                all_dgcnn_embeddings.append(embeddings.cpu())
+                # Encoder already returns graph-level vectors via SortPooling
+                embeddings = encoder(graphs)              # (B, D)
+                all_graph_embeddings.append(embeddings.cpu())
 
-                # Run classifier if provided
-                if classifier_model is not None:
-                    logits = classifier_model(embeddings.to(device))
-                    preds = logits.argmax(dim=1)
-                    probs = torch.softmax(logits, dim=1)
+                logits = classifier_model(embeddings.to(device))
+                preds = logits.argmax(dim=1)
+                probs = torch.softmax(logits, dim=1)
+                all_predictions.append(preds.cpu())
+                all_probs.append(probs.cpu())
 
-                    all_predictions.append(preds.cpu())
-                    all_probs.append(probs.cpu())
+            else:
+                raise ValueError("classifier_type must be 'vgg' or 'conv1d'")
 
     # Concatenate collected tensors
-    dgcnn_tensor = torch.cat(all_dgcnn_embeddings, dim=0)
+    emb_tensor = torch.cat(all_graph_embeddings, dim=0)
     labels_tensor = torch.cat(all_labels, dim=0)
 
-    print(f"[save_embeddings] Shapes — dgcnn:{dgcnn_tensor.shape}, labels:{labels_tensor.shape}")
+    print(f"[save_embeddings] Shapes — embeddings:{emb_tensor.shape}, labels:{labels_tensor.shape}")
 
-    # Save encoder embeddings and labels
-    torch.save(dgcnn_tensor, os.path.join(embedding_dir, f"dgcnn_embeddings_{prefix}.pt"))
+    # Save graph-level embeddings and labels
+    torch.save(emb_tensor, os.path.join(embedding_dir, f"dgcnn_embeddings_{prefix}.pt"))
     torch.save(labels_tensor, os.path.join(embedding_dir, f"{prefix}_labels.pt"))
 
     # Save classifier outputs if available
