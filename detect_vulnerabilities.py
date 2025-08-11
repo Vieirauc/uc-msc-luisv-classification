@@ -329,7 +329,10 @@ def save_embeddings(encoder, dataset, device, embedding_dir, prediction_dir,
         classifier_model.eval()
 
     data_loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate)
-    all_dgcnn_embeddings, all_clf_features, all_predictions, all_labels = [], [], [], []
+
+    all_dgcnn_embeddings = []
+    all_predictions = []
+    all_labels = []
     all_probs = []
 
     with torch.no_grad():
@@ -339,61 +342,58 @@ def save_embeddings(encoder, dataset, device, embedding_dir, prediction_dir,
             all_labels.append(labels.cpu())
 
             if classifier_type == "vgg":
-                batched_graph = encoder(graphs)  # returns batched_graph with node 'h'
+                # Encoder returns batched_graph with node embeddings in ndata['h']
+                batched_graph = encoder(graphs)
                 node_embeddings = batched_graph.ndata['h']
                 batch_sizes = batched_graph.batch_num_nodes()
+
+                # Pool node embeddings to a single graph-level vector per graph
                 split_feats = torch.split(node_embeddings, batch_sizes.tolist())
                 pooled = torch.stack([f.mean(dim=0) for f in split_feats], dim=0)
                 all_dgcnn_embeddings.append(pooled.cpu())
 
-                clf_input = adjust_to_vgg(vgg_adapter(batched_graph))
-                all_clf_features.append(clf_input.cpu())
-
+                # Run classifier if provided
                 if classifier_model is not None:
+                    clf_input = adjust_to_vgg(vgg_adapter(batched_graph))
                     logits = classifier_model(clf_input.to(device))
                     preds = logits.argmax(dim=1)
                     probs = torch.softmax(logits, dim=1)
 
                     all_predictions.append(preds.cpu())
-                    all_probs.append(probs.cpu())   # NEW
-
+                    all_probs.append(probs.cpu())
 
             elif classifier_type == "conv1d":
-                embeddings = encoder(graphs)  # SortPooling embeddings
+                embeddings = encoder(graphs)  # Graph-level embeddings via SortPooling
                 all_dgcnn_embeddings.append(embeddings.cpu())
-                all_clf_features.append(embeddings.cpu())
 
+                # Run classifier if provided
                 if classifier_model is not None:
                     logits = classifier_model(embeddings.to(device))
                     preds = logits.argmax(dim=1)
                     probs = torch.softmax(logits, dim=1)
 
                     all_predictions.append(preds.cpu())
-                    all_probs.append(probs.cpu())   # NEW
+                    all_probs.append(probs.cpu())
 
-
+    # Concatenate collected tensors
     dgcnn_tensor = torch.cat(all_dgcnn_embeddings, dim=0)
-    clf_feat_tensor = torch.cat(all_clf_features, dim=0)
     labels_tensor = torch.cat(all_labels, dim=0)
 
-    print(f"[save_embeddings] Shapes — dgcnn:{dgcnn_tensor.shape}, clf_feat:{clf_feat_tensor.shape}, labels:{labels_tensor.shape}" )
+    print(f"[save_embeddings] Shapes — dgcnn:{dgcnn_tensor.shape}, labels:{labels_tensor.shape}")
 
-
+    # Save encoder embeddings and labels
     torch.save(dgcnn_tensor, os.path.join(embedding_dir, f"dgcnn_embeddings_{prefix}.pt"))
     torch.save(labels_tensor, os.path.join(embedding_dir, f"{prefix}_labels.pt"))
-    torch.save(clf_feat_tensor, os.path.join(prediction_dir, f"{classifier_type}_features_{prefix}.pt"))
 
+    # Save classifier outputs if available
     if classifier_model is not None and len(all_predictions) > 0:
         pred_tensor = torch.cat(all_predictions, dim=0)
         torch.save(pred_tensor, os.path.join(prediction_dir, f"{classifier_type}_predictions_{prefix}.pt"))
 
-        probs_tensor = torch.cat(all_probs, dim=0)   # NEW
-        torch.save(probs_tensor, os.path.join(prediction_dir, f"{classifier_type}_probs_{prefix}.pt"))  # NEW
-
+        probs_tensor = torch.cat(all_probs, dim=0)
+        torch.save(probs_tensor, os.path.join(prediction_dir, f"{classifier_type}_probs_{prefix}.pt"))
 
     print(f"[save_embeddings] Saved: {prefix}")
-
-
 
 
 def log_hyperparameters(run_output_dir, params_dict):
@@ -781,22 +781,6 @@ for run_idx in range(N_RUNS):
             for param in encoder.parameters():
                 param.requires_grad = False
 
-        if SAVE_EMBEDDINGS:
-            save_embeddings(
-                encoder=encoder, dataset=trainset, device=device,
-                embedding_dir=embedding_dir, prediction_dir=prediction_dir,
-                prefix="train_ae", batch_size=batch_size,
-                classifier_type=classifier_type, vgg_adapter=vgg_adapter_arg,
-                classifier_model=None  # AE stage → no classifier preds
-            )
-            save_embeddings(
-                encoder=encoder, dataset=testset, device=device,
-                embedding_dir=embedding_dir, prediction_dir=prediction_dir,
-                prefix="test_ae", batch_size=batch_size,
-                classifier_type=classifier_type, vgg_adapter=vgg_adapter_arg,
-                classifier_model=None
-            )
-
 
 
     # Optimizer setup
@@ -912,7 +896,7 @@ for run_idx in range(N_RUNS):
         f.write(f"Final accuracy: {accuracy:.4f}\n")
 
     # After training completes
-    if SAVE_EMBEDDINGS and not USE_AUTOENCODER:
+    if SAVE_EMBEDDINGS:
         # Save TRAIN embeddings and final predictions
         save_embeddings(
             encoder=encoder, dataset=trainset, device=device,
