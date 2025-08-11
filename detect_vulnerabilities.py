@@ -323,7 +323,8 @@ def write_file(filename, rows):
 
 def save_embeddings(encoder, dataset, device, embedding_dir, prediction_dir,
                     prefix, batch_size=10, classifier_type=None,
-                    vgg_adapter=None, classifier_model=None):
+                    vgg_adapter=None, classifier_model=None,
+                    compact_save=True):
     encoder.eval()
     if classifier_model:
         classifier_model.eval()
@@ -349,9 +350,15 @@ def save_embeddings(encoder, dataset, device, embedding_dir, prediction_dir,
                 adapted = vgg_adapter(batched_graph)  # no padding yet
                 B, C, H, W = adapted.shape
 
-                # ---- Saved embedding = flattened adapter output (exact content VGG uses) ----
-                graph_vecs = adapted.view(B, -1)          # (B, C*k_amp*F)
-                all_graph_embeddings.append(graph_vecs.cpu())
+                # ---- Save compact or full embeddings ----
+                if compact_save:
+                    # Global pooling over spatial dims → (B, C)
+                    pooled = adapted.mean(dim=[2, 3])  # or torch.amax(adapted, dim=[2, 3])
+                    all_graph_embeddings.append(pooled.cpu())
+                else:
+                    # Full flattened output (B, C*k_amp*F) — large!
+                    graph_vecs = adapted.view(B, -1)
+                    all_graph_embeddings.append(graph_vecs.cpu())
 
                 # Classifier forward uses the padded 224x224 image
                 vgg_in = adjust_to_vgg(adapted)
@@ -394,6 +401,7 @@ def save_embeddings(encoder, dataset, device, embedding_dir, prediction_dir,
         torch.save(probs_tensor, os.path.join(prediction_dir, f"{classifier_type}_probs_{prefix}.pt"))
 
     print(f"[save_embeddings] Saved: {prefix}")
+
 
 
 def log_hyperparameters(run_output_dir, params_dict):
