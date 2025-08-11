@@ -35,7 +35,7 @@ from detect_vulnerabilities_vgg import VGGnet
 
 project = 'linux' # 'gecko-dev'#'linux'
 version = None # 'v0.5_filtered'
-graph_type = 'ast' #
+graph_type = 'pdg' #
 
 #cfg-dataset-linux-v0.5 has 101513 entries
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
@@ -47,7 +47,7 @@ graph_type = 'ast' #
 
 #dataset_name = 'cfg-dataset-linux-v0.5_filtered'
 #dataset_name = 'cfg-dataset-linux-sample1k'
-dataset_name = 'ast-dataset-linux_undersampled20k'
+dataset_name = 'pdg-dataset-linux_undersampled20k'
 
 dataset_path = 'datasets/'
 
@@ -59,8 +59,8 @@ else:
 
 # %%
 
-N_RUNS = 1  # ou 10, conforme precisares
-SEED_LIST = [53] #[42 + i*11 for i in range(N_RUNS)]  # Seeds diferentes, mas fixas
+N_RUNS = 5  # ou 10, conforme precisares
+SEED_LIST = [42 + i*11 for i in range(N_RUNS)]  # Seeds diferentes, mas fixas
 
 DEBUG = False
 SAVE_EMBEDDINGS = True
@@ -84,18 +84,18 @@ sample_weight_value = 1
 CEL_weight = [1,1]
 
 USE_AUTOENCODER = False
-NUM_NODES = 290  # padding fixo
+NUM_NODES = 144  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
 AUTOENCODER_EPOCHS = 20
 
-classifier_type = "conv1d"  # ou "vgg" ou "conv1d"
+classifier_type = "vgg"  # ou "vgg" ou "conv1d"
 
 #heads = 4
 hidden_dimension = [32, 32, 32, 32] 
 batch_size = 10
-k_sortpooling = 64  # for SortPooling
-k_amp = 64          # for Adaptive Max Pooling (VGG pathway)
+k_sortpooling = 32  # for SortPooling
+k_amp = 32          # for Adaptive Max Pooling (VGG pathway)
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
