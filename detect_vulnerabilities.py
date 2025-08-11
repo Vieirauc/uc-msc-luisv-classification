@@ -102,10 +102,10 @@ learning_rate = 0.001 #0.0001 #0.00001 #0.000001
 num_epochs = 30 #2000 #500 # 1000
 
 TESTS = [
-    {"id": "T9",  "classifier_type": "conv1d", "USE_AUTOENCODER": False},
-    {"id": "T10", "classifier_type": "vgg",    "USE_AUTOENCODER": False},
-    {"id": "T11", "classifier_type": "conv1d", "USE_AUTOENCODER": True},
     {"id": "T12", "classifier_type": "vgg",    "USE_AUTOENCODER": True},
+    {"id": "T10", "classifier_type": "vgg",    "USE_AUTOENCODER": False},
+    {"id": "T9",  "classifier_type": "conv1d", "USE_AUTOENCODER": False},
+    {"id": "T11", "classifier_type": "conv1d", "USE_AUTOENCODER": True},
 ]
 
 if graph_type == 'cfg':
