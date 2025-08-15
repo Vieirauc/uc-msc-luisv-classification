@@ -7,11 +7,14 @@ from sklearn.decomposition import PCA
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.preprocessing import StandardScaler
+from sklearn.utils.class_weight import compute_class_weight, compute_sample_weight
 
 # === CONFIGURATION ===
 classifier_type = "conv1d"  # or "vgg"
+USE_PCA_FOR_CLASSIFIERS = False  # Set to True if you want to use PCA for classifiers
 
-run_dir = r"C:\Users\luka3\Desktop\UC\MSI\Tese\code\pamela_runs\docker_outputs\runs\ast-dataset-linux_undersampled20k_hd-32-32-32-32_norm-minmax_clf-conv1d_ep1_wsw_swv37.89_k64_dr0.3_noae_embsave\run_1"
+run_dir = r"C:\Users\luka3\Desktop\UC\MSI\Tese\code\pamela_runs\docker_outputs\runs\PDG_multirun_embs\T9_pdg-dataset-linux_undersampled20k_hd-32-32-32-32_norm-minmax_clf-conv1d_ep30_wsw_swv37.25_k32_dr0.3_noae_embsave\run_4"
 embedding_dir = os.path.join(run_dir, "embeddings")
 prediction_dir = os.path.join(run_dir, "predictions")
 output_dir = os.path.join(run_dir, "embedding_analysis")
@@ -45,11 +48,19 @@ def _load_pack(prefix):
 X_train, y_train, y_pred_train = _load_pack(TRAIN_PREFIX)
 X_test,  y_test,  y_pred_test  = _load_pack(TEST_PREFIX)
 
+#--- Fit scaler + PCA on TRAIN, transform both
+#scaler = StandardScaler().fit(X_train)              # NEW: scale features
+#X_train_std = scaler.transform(X_train)
+#X_test_std  = scaler.transform(X_test)
+
 # --- Fit PCA on TRAIN, transform both
 pca_dim = 20
 pca = PCA(n_components=pca_dim).fit(X_train)
 Z_train = pca.transform(X_train)
 Z_test  = pca.transform(X_test)
+#pca = PCA(n_components=pca_dim).fit(X_train_std)
+#Z_train = pca.transform(X_train_std)
+#Z_test  = pca.transform(X_test_std)
 
 # --- (Optional) Export tidy CSV with PCA coords + metadata
 df_train = pd.DataFrame(Z_train, columns=[f"pc{i+1}" for i in range(Z_train.shape[1])])
@@ -101,13 +112,24 @@ if y_pred_test is not None:
     colors = ["green", "red", "blue", "orange"]
     _scatter_2d(Zt2, view_labels, names, colors, "PCA (TEST) — TP/FP/TN/FN", "pca_test_predclasses.png")
 
+# --- Compute balanced class weights from TRAIN labels
+classes = np.unique(y_train)
+cw = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
+class_weight_dict = {int(c): float(w) for c, w in zip(classes, cw)}
+
 # --- Conventional classifiers: train on TRAIN, evaluate on TEST
-print("[INFO] RF + SVM on PCA(Z) with train→test protocol")
+if USE_PCA_FOR_CLASSIFIERS:
+   CLF_train, CLF_test, feature_space = Z_train, Z_test, "PCA(20)"
+else:
+    CLF_train, CLF_test, feature_space = X_train, X_test, "Raw (standardized)"
+print(f"[INFO] RF + SVM on {feature_space} with train→test protocol (balanced sample weights)")
+
+sw = compute_sample_weight(class_weight='balanced', y=y_train)
 
 # RF
 rf = RandomForestClassifier(n_estimators=200, random_state=42)
-rf.fit(Z_train, y_train)
-y_pred_rf = rf.predict(Z_test)
+rf.fit(CLF_train, y_train, sample_weight=sw)
+y_pred_rf = rf.predict(CLF_test)
 pd.DataFrame(classification_report(y_test, y_pred_rf, output_dict=True)).T.to_csv(
     os.path.join(output_dir, "classification_report_rf.csv"))
 cm_rf = confusion_matrix(y_test, y_pred_rf, labels=[0, 1])
@@ -118,8 +140,8 @@ plt.close()
 
 # SVM
 svm = SVC(kernel='rbf', probability=True, random_state=42)
-svm.fit(Z_train, y_train)
-y_pred_svm = svm.predict(Z_test)
+svm.fit(CLF_train, y_train, sample_weight=sw)
+y_pred_svm = svm.predict(CLF_test)
 pd.DataFrame(classification_report(y_test, y_pred_svm, output_dict=True)).T.to_csv(
     os.path.join(output_dir, "classification_report_svm.csv"))
 cm_svm = confusion_matrix(y_test, y_pred_svm, labels=[0, 1])
