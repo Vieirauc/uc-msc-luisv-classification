@@ -2,9 +2,11 @@ datasets/*.pkl
 datasets/*.csv
 .venv/
 venv/
-test_results/__pycache__/
+old_test_results
+old_test_results/__pycache__/
 __pycache__/
 __pycache__/
 output/
 git-filter-repo
 stats/
+analyze_embeddings_old.py
