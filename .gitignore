@@ -12,3 +12,4 @@ output/
 git-filter-repo
 stats/
 analyze_embeddings_old.py
+mailmap.txt
