@@ -660,7 +660,7 @@ for test in TESTS:
                 print(f"[INFO] Using ONLY sample weights (sampler): {sample_weights[:10]}...")
 
         else:
-            data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate, shuffle=True)
+            data_loader = DataLoader(trainset, batch_size=batch_size, collate_fn=collate)
 
             if USE_FOCAL_LOSS:
                 loss_func = lambda outputs, targets: focal_loss(outputs, targets, weight)

@@ -95,22 +95,43 @@ labels_colors = ["blue", "red"]
 _scatter_2d(Zt2, y_test, labels_names, labels_colors, "PCA (TEST) — Ground Truth", "pca_test_labels.png")
 
 # Predictions view: TP/FP/TN/FN (only if y_pred_test exists)
+# Predictions view: TP/FP/TN/FN (only if y_pred_test exists)
 if y_pred_test is not None:
     tp = (y_pred_test == 1) & (y_test == 1)
     fp = (y_pred_test == 1) & (y_test == 0)
     tn = (y_pred_test == 0) & (y_test == 0)
     fn = (y_pred_test == 0) & (y_test == 1)
 
-    # Map each sample to class id 0..3
     view_labels = np.full_like(y_test, fill_value=-1)
-    view_labels[tp] = 0
-    view_labels[fp] = 1
-    view_labels[tn] = 2
-    view_labels[fn] = 3
+    view_labels[tp] = 0  # TP
+    view_labels[fp] = 1  # FP
+    view_labels[tn] = 2  # TN
+    view_labels[fn] = 3  # FN
 
-    names = ["TP", "FP", "TN", "FN"]
-    colors = ["green", "red", "blue", "orange"]
-    _scatter_2d(Zt2, view_labels, names, colors, "PCA (TEST) — TP/FP/TN/FN", "pca_test_predclasses.png")
+    names  = ["TP", "FP", "TN", "FN"]
+    colors = ["blue", "orange" , "green", "red"]
+
+    Zt2 = Z_test[:, :2]
+    plt.figure(figsize=(8, 6))
+
+    # Draw everything except TP first: FP(1), TN(2), FN(3)
+    for idx in [1, 2, 3]:
+        mask = (view_labels == idx)
+        if np.any(mask):
+            plt.scatter(Zt2[mask, 0], Zt2[mask, 1],
+                        label=names[idx], color=colors[idx], alpha=0.5)
+
+    # TP last so it's on top
+    mask_tp = (view_labels == 0)
+    if np.any(mask_tp):
+        plt.scatter(Zt2[mask_tp, 0], Zt2[mask_tp, 1],
+                    label=names[0], color=colors[0], alpha=0.5)
+
+    plt.title("PCA (TEST) — TP/FP/TN/FN")
+    plt.legend()
+    plt.savefig(os.path.join(output_dir, "pca_test_predclasses.png"))
+    plt.close()
+
 
 # --- Compute balanced class weights from TRAIN labels
 classes = np.unique(y_train)
