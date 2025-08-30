@@ -40,7 +40,7 @@ docker exec -it msiproj_container bash
 ### 3. Copy datasets into the container
 
 ```
-docker cp /path/to/your_dataset.csv msiproj_container:/workspace/uc-msc-luisv-cfg-dataset/datasets/
+docker cp /path/to/your_dataset.csv msiproj_container:/workspace/uc-msc-luisv-classification/datasets/
 ```
 
 The loader expects a semicolon-separated CSV with columns:
