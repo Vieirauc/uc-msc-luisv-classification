@@ -1,25 +1,173 @@
-# CFG Dataset
+# Classification Pipeline
 
-Repository with the dataset of vulnerable functions, with the CFG (Control Flow Graph) as their features.
+Graph-based vulnerability detection with a DGCNN encoder and pluggable classifiers.
+You can train, evaluate, and analyze embeddings from saved runs.
 
-Each file in the [datasets](datasets) folder has the `.tar.gz` extension, and it compress a `.csv` files with the following data:
+## Contents
 
-* Unique description of each function (sample)
-* Label indicating if the function is vulnerable or not
-* Degree of the CFG, i.e., the number of nodes
-* Adjacency Matrix of each CFG
-* Features of each node of the CFG
+* detect\_vulnerabilities.py – main training and evaluation script
+* load\_datasets.py – CSV to DGL graph loader
+* analyze\_embeddings.py – PCA plots and classic classifiers on saved embeddings
+* ---
 
-The features of each sample are:
-* Outdegree of the node (i.e., number of edges leaving the node)
-* Indegree of the node (i.e., number of edges arriving in the node)
-* Number of statements of the node
-* Number of statements with type "Numeric Constants" in the node (available from v0.2)
-* Number of statements with type "Transfer Instructions" in the node (available from v0.2)
-* Number of statements with type "Call Instructions" in the node (available from v0.2)
-* Number of statements with type "Arithmetic Instructions" in the node (available from v0.2)
-* Number of statements with type "Compare Instructions" in the node (available from v0.2)
-* Number of statements with type "Mov Instructions" in the node (available from v0.2)
-* Number of statements with type "Terminations Instructions" in the node (available from v0.2)
-* Number of statements with type "Data Declaration Instructions" in the node (available from v0.2)
+## Quick Start
 
+### 1. Build the Docker image
+
+```
+docker build -t msiproj .
+```
+
+### 2. Run a container with GPU
+
+Pick one of these:
+
+```
+# Single GPU 0
+docker run --gpus '"device=0"' -it --name msiproj_container msiproj
+
+# All GPUs
+docker run --gpus all -it --name msiproj_container msiproj
+```
+
+Re-attach later:
+
+```
+docker start -ai msiproj_container
+docker exec -it msiproj_container bash
+```
+
+### 3. Copy datasets into the container
+
+```
+docker cp /path/to/your_dataset.csv msiproj_container:/workspace/uc-msc-luisv-cfg-dataset/datasets/
+```
+
+The loader expects a semicolon-separated CSV with columns:
+`label size adjacency_matrix feature_matrix`
+
+Each row → one DGL graph.
+
+* adjacency\_matrix is parsed and the diagonal is set to one
+* feature\_matrix is reshaped to size × feature\_dim
+
+See load\_datasets.py for details.
+
+---
+
+## Train and Evaluate
+
+Open detect\_vulnerabilities.py and set the top-level parameters:
+
+* Dataset: dataset\_name, dataset\_path
+* Graph type: graph\_type one of cfg, ast, pdg
+* Classifier: classifier\_type conv1d or vgg
+* Autoencoder: USE\_AUTOENCODER, FREEZE\_ENCODER
+* Normalization: MINMAX or ZNORM
+* Pooling / sizes: k\_sortpooling, k\_amp
+* Class balancing: weighted sampler or class weights
+
+Run training:
+
+```
+python detect_vulnerabilities.py
+```
+
+### Outputs
+
+Each run is saved under output/runs/\<auto\_named\_run>/ with:
+
+* stats/ → training curves (loss, accuracy) and CSVs
+* classification\_report.csv, confusion\_matrix.png
+* hyperparameters/ → CSV, JSON, LaTeX table with run config
+* embeddings/ and predictions/ (if saving enabled)
+
+The run folder name encodes hyperparameters for easy comparison.
+
+---
+
+## Analyze Embeddings
+
+Use analyze\_embeddings.py to visualize and probe embeddings.
+
+Config options:
+
+* run\_dir → path to a trained run under output/runs
+* classifier\_type → must match the run
+* run\_random\_forest and run\_svm → enable RF or SVM probes
+
+Run analysis:
+
+```
+python analyze_embeddings.py
+```
+
+Outputs go to output/runs/<run>/embedding\_analysis/ and include PCA plots, confusion matrices, and reports.
+
+---
+
+## Dataset Format
+
+CSV format expected by load\_datasets.py:
+
+* label → 0/1 or boolean
+* size → number of nodes
+* adjacency\_matrix → stringified list, becomes size × size matrix (diagonal = 1)
+* feature\_matrix → stringified list, becomes size × feature\_dim matrix
+
+Each row becomes a DGL graph with node features under "features".
+
+---
+
+## GPU and Library Check
+
+Inside the container, verify CUDA:
+
+```
+python3 -c "import torch; print('PyTorch', torch.__version__); print('CUDA', torch.version.cuda); print('GPU', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'No GPU')"
+```
+
+---
+
+## Screen Tool (for remote runs)
+
+Useful commands:
+
+```
+# Start new session
+screen -S train
+
+# Detach (keeps process running)
+Ctrl + A, then D
+
+# List sessions
+screen -ls
+
+# Reattach
+screen -r train
+
+# Kill session
+screen -XS train quit
+```
+
+---
+
+## Clean Outputs
+
+Delete old run outputs:
+
+Iinside the container:
+
+```
+rm -rf /workspace/uc-msc-luisv-cfg-dataset/output/runs/*
+```
+
+---
+
+## Notes
+
+* Modify hyperparameters in detect\_vulnerabilities.py, rerun, and commit changes if needed.
+* Embeddings and results are structured for reproducibility and comparison across runs.
+* External classifiers (RF, SVM) and PCA visualization are optional but help interpret embeddings.
+
+---
