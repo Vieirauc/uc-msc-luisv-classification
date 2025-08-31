@@ -877,12 +877,13 @@ for test in TESTS:
 
             epoch_loss = total_loss / len(data_loader)
             accuracy = correct / total
+            f1 = f1_score(all_labels, all_preds, zero_division=0)
 
             stats_dict['epoch'].append(epoch)
             stats_dict['loss'].append(epoch_loss)
             stats_dict['accuracy'].append(accuracy)
 
-            print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}')
+            print(f'Epoch {epoch}, Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}')
 
         train_end = time.time()
         print(f"[INFO] Training completed in {(train_end - train_start):.2f} seconds.\n")
