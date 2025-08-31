@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  msiproj:
+    image: msiproj
+    container_name: msiproj_container
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    stdin_open: true
+    tty: true
+    command: bash
+    volumes:
+      - ~/docker_outputs/runs:/workspace/uc-msc-luisv-classification/output/runs
