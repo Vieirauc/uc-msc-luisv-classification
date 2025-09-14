@@ -57,6 +57,30 @@ See load\_datasets.py for details.
 
 ---
 
+Dependencies and Setup Notes
+
+Some required libraries are not fully covered by requirements.txt. If you run into DGL or PyG related errors, install them manually with the proper CUDA version:
+
+pip install dgl -f https://data.dgl.ai/wheels/torch-2.1/cu118/repo.html
+
+pip install torch-scatter torch-sparse torch-geometric \
+    -f https://data.pyg.org/whl/torch-2.1.0+cu118.html
+
+
+Check the URLs for compatibility with your installed torch and CUDA versions.
+
+Workflow Tips
+
+When experimenting with hyperparameters, you don’t need to commit every change in detect_vulnerabilities.py. After running your test, you can restore the file to its clean state:
+
+# Edit hyperparameters and run your experiment
+git restore detect_vulnerabilities.py
+git pull
+
+
+This avoids polluting the repository history with temporary edits.
+
+
 ## Train and Evaluate
 
 Open detect\_vulnerabilities.py and set the top-level parameters:
