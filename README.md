@@ -3,12 +3,12 @@
 Graph-based vulnerability detection with a DGCNN encoder and pluggable classifiers.
 You can train, evaluate, and analyze embeddings from saved runs.
 
-## Contents
+## Main Components
 
 * detect\_vulnerabilities.py – main training and evaluation script
 * load\_datasets.py – CSV to DGL graph loader
 * analyze\_embeddings.py – PCA plots and classic classifiers on saved embeddings
-* ---
+* detect_vulnerabilities_vgg.py - All the VGG classes
 
 ## Quick Start
 
