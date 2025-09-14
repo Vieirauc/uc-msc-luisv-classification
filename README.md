@@ -30,7 +30,7 @@ docker run --gpus '"device=0"' -it --name msiproj_container msiproj
 # All GPUs
 docker run --gpus all -it --name msiproj_container msiproj
 ```
-Note: "msiproj_container" is an example name for the image.
+Note: "msiproj_container" is an example name for the container.
 
 Re-attach later:
 
