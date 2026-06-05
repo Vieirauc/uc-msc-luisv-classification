@@ -113,6 +113,17 @@ Each run is saved under output/runs/\<auto\_named\_run>/ with:
 
 The run folder name encodes hyperparameters for easy comparison.
 
+These outputs can be compressed by using the following command on the host machine:
+
+```
+tar -czvf thesis_run.tar.gz docker_outputs/
+```
+
+And the copied to your machine using:
+
+```
+scp username@hostmachine:~/thesis_run.tar.gz .
+```
 ---
 
 ## Analyze Embeddings
