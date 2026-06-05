@@ -59,7 +59,7 @@ else:
 
 # %%
 
-N_RUNS = 5  # ou 10, conforme precisares
+N_RUNS = 2  #5 #10
 SEED_LIST = [42 + i*11 for i in range(N_RUNS)]  # Seeds diferentes, mas fixas
 
 DEBUG = False
