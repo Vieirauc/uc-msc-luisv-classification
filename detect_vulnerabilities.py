@@ -852,6 +852,7 @@ for test in TESTS:
         train_start = time.time()
         for epoch in range(num_epochs):
             total_loss, correct, total = 0, 0, 0
+            epoch_preds, epoch_labels = [], []
 
             for graphs, labels in data_loader:
                 graphs = [g.to(device) for g in graphs]
@@ -874,10 +875,12 @@ for test in TESTS:
                 total_loss += loss.item()
                 correct += (predictions.argmax(dim=1) == labels).sum().item()
                 total += labels.size(0)
+                epoch_preds.extend(predictions.argmax(dim=1).detach().cpu().tolist())
+                epoch_labels.extend(labels.detach().cpu().tolist())
 
             epoch_loss = total_loss / len(data_loader)
             accuracy = correct / total
-            f1 = f1_score(all_labels, all_preds, zero_division=0)
+            f1 = f1_score(epoch_labels, epoch_preds, zero_division=0)
 
             stats_dict['epoch'].append(epoch)
             stats_dict['loss'].append(epoch_loss)
