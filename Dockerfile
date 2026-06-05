@@ -37,6 +37,10 @@ WORKDIR /workspace/repo
 # Instalar PyTorch compatível com CUDA 11.8
 #RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 RUN pip install torch==2.1.0+cu118 torchvision==0.16.0+cu118 --index-url https://download.pytorch.org/whl/cu118
+RUN pip install torch-scatter torch-sparse torch-cluster torch-spline-conv \
+    -f https://data.pyg.org/whl/torch-2.1.0+cu118.html
+
+RUN pip install torch-geometric
 
 RUN pip install dgl -f https://data.dgl.ai/wheels/torch-2.1/cu118/repo.html
 
