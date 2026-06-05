@@ -14,7 +14,7 @@ from sklearn.utils.class_weight import compute_class_weight, compute_sample_weig
 classifier_type = "conv1d"  # or "vgg"
 USE_PCA_FOR_CLASSIFIERS = False  # Set to True if you want to use PCA for classifiers
 
-run_dir = r"C:\Users\luka3\Desktop\UC\MSI\Tese\code\pamela_runs\docker_outputs\runs\PDG_multirun_embs\T9_pdg-dataset-linux_undersampled20k_hd-32-32-32-32_norm-minmax_clf-conv1d_ep30_wsw_swv37.25_k32_dr0.3_noae_embsave\run_4"
+run_dir = r"output\runs\T3_cfg-dataset-linux-sample1k_hd-32-32-32-32_norm-minmax_clf-conv1d_ep10_wsw_swv4.0_k32_dr0.3_noae_embsave\run_1"
 embedding_dir = os.path.join(run_dir, "embeddings")
 prediction_dir = os.path.join(run_dir, "predictions")
 output_dir = os.path.join(run_dir, "embedding_analysis")
