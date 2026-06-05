@@ -31,8 +31,8 @@ RUN apt-get update && \
 #RUN chmod 600 /root/.ssh/id_rsa
 
 # Clonar repositório
-RUN git clone git@github.com:Vieirauc/uc-msc-luisv-classification.git /workspace/uc-msc-luisv-classification
-WORKDIR /workspace/uc-msc-luisv-classification
+RUN git clone https://github.com/Vieirauc/uc-msc-luisv-classification.git /workspace/repo
+WORKDIR /workspace/repo
 
 # Instalar PyTorch compatível com CUDA 11.8
 #RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
