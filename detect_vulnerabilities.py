@@ -99,7 +99,7 @@ k_amp = 32          # for Adaptive Max Pooling (VGG pathway)
 dropout_rate = 0.3 #0.1 
 conv2dChannelParam = 32
 learning_rate = 0.001 #0.0001 #0.00001 #0.000001 
-num_epochs = 30 #2000 #500 # 1000
+num_epochs = 10 #2000 #500 # 1000
 
 TESTS = [
     {"id": "T1", "classifier_type": "vgg",    "USE_AUTOENCODER": True},
