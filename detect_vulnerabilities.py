@@ -35,7 +35,7 @@ from detect_vulnerabilities_vgg import VGGnet
 
 project = 'linux' # 'gecko-dev'#'linux'
 version = None # 'v0.5_filtered'
-graph_type = 'pdg' #
+graph_type = 'cfg' #
 
 #cfg-dataset-linux-v0.5 has 101513 entries
 #cfg-dataset-linux-v0.5_filtered has 65685 entries
@@ -87,7 +87,7 @@ USE_AUTOENCODER = False
 NUM_NODES = 144  # padding fixo
 FREEZE_ENCODER = True
 learning_rate_ae = 0.001 #0.0001 #0.00001 #0.000001
-AUTOENCODER_EPOCHS = 10
+AUTOENCODER_EPOCHS = 5
 
 classifier_type = "vgg"  # ou "vgg" ou "conv1d"
 
