@@ -38,5 +38,7 @@ WORKDIR /workspace/uc-msc-luisv-classification
 #RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 RUN pip install torch==2.1.0+cu118 torchvision==0.16.0+cu118 --index-url https://download.pytorch.org/whl/cu118
 
+RUN pip install dgl -f https://data.dgl.ai/wheels/torch-2.1/cu118/repo.html
+
 # Instalar dependências restantes do projeto
 RUN pip install -r requirements.txt
